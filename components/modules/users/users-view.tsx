@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAuth, UserRole } from "@/context/auth-context";
-import { RoleGuard } from "@/components/auth/role-guard";
+import { useAuth } from "@/context/auth-context";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +12,7 @@ import { api } from "@/lib/api";
 import { useToast } from "@/components/ui/toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Loader } from "@/components/ui/loader";
 
 interface User {
     user_id: number;
@@ -28,7 +28,7 @@ interface User {
     created_at: string;
 }
 
-export function UsersView({ allowedRoles = ["SuperAdmin"] }: { allowedRoles?: UserRole[] }) {
+export function UsersView() {
     const { user } = useAuth();
     const { addToast } = useToast();
     const [users, setUsers] = useState<User[]>([]);
@@ -49,10 +49,10 @@ export function UsersView({ allowedRoles = ["SuperAdmin"] }: { allowedRoles?: Us
             }
         };
 
-        if (user && allowedRoles.includes(user.role as UserRole)) {
+        if (user) {
             fetchUsers();
         }
-    }, [user, allowedRoles, addToast]);
+    }, [user, addToast]);
 
     // Derived distinct roles for the filter dropdown
     const availableRoles = Array.from(new Set(users.map(u => u.role_name))).filter(Boolean);
@@ -87,8 +87,7 @@ export function UsersView({ allowedRoles = ["SuperAdmin"] }: { allowedRoles?: Us
     };
 
     return (
-        <RoleGuard allowedRoles={allowedRoles}>
-            <div className="flex flex-col gap-6 h-full flex-1">
+        <div className="flex flex-col gap-6 h-full flex-1">
                 <div className="flex flex-col gap-2 md:flex-row md:items-center justify-between">
                     <div>
                         <h2 className="text-3xl font-bold tracking-tight">System Users</h2>
@@ -128,10 +127,11 @@ export function UsersView({ allowedRoles = ["SuperAdmin"] }: { allowedRoles?: Us
                     </CardHeader>
                     <CardContent className="p-0 flex-1 overflow-auto bg-muted/5 relative">
                         {isLoading ? (
-                            <div className="flex flex-col items-center justify-center p-12 text-muted-foreground gap-3 absolute inset-0 bg-background/50 z-10 backdrop-blur-sm">
-                                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                                <p className="font-medium animate-pulse">Loading System Users...</p>
-                            </div>
+                            <Loader
+                                size="lg"
+                                text="Loading System Users..."
+                                className="absolute inset-0 bg-background/50 z-10 backdrop-blur-sm"
+                            />
                         ) : filteredUsers.length === 0 ? (
                             <div className="flex flex-col items-center justify-center p-16 text-muted-foreground gap-4">
                                 <div className="p-4 rounded-full bg-muted">
@@ -215,6 +215,5 @@ export function UsersView({ allowedRoles = ["SuperAdmin"] }: { allowedRoles?: Us
                     </CardContent>
                 </Card>
             </div>
-        </RoleGuard>
     );
 }

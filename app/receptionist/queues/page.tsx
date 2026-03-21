@@ -3,7 +3,7 @@ import { ReceptionistQueueView } from "@/components/modules/queues/receptionist-
 
 export default function ReceptionistQueuesPage() {
     return (
-        <RoleGuard allowedRoles={["Receptionist"]}>
+        <RoleGuard allowedRoles={["SuperAdmin", "GroupAdmin", "HospitalAdmin", "Doctor", "Receptionist"]}>
             <ReceptionistQueueView />
         </RoleGuard>
     );
