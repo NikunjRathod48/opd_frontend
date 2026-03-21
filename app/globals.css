@@ -1,26 +1,318 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@theme {
+  --font-sans: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  /* Radii - "Premium Sweet Spot" */
+  --radius-xs: 0.3rem;
+  --radius-sm: 0.4rem;
+  --radius-md: 0.6rem;
+  --radius-lg: 0.75rem;
+  /* 12px */
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+
+  /* Animations */
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+  --animate-fade-in: fade-in 0.3s ease-out;
+  --animate-fade-out: fade-out 0.2s ease-in;
+  --animate-zoom-in: zoom-in 0.2s ease-out;
+  --animate-zoom-out: zoom-out 0.2s ease-in;
+  --animate-slide-in-from-right: slide-in-from-right 0.3s ease-out;
+  --animate-slide-in-from-top: slide-in-from-top 0.3s ease-out;
+  --animate-slide-out-to-top: slide-out-to-top 0.2s ease-in;
+
+  @keyframes accordion-down {
+    from {
+      height: 0
+    }
+
+    to {
+      height: var(--radix-accordion-content-height)
+    }
+  }
+
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height)
+    }
+
+    to {
+      height: 0
+    }
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0
+    }
+
+    to {
+      opacity: 1
+    }
+  }
+
+  @keyframes fade-out {
+    from {
+      opacity: 1
+    }
+
+    to {
+      opacity: 0
+    }
+  }
+
+  @keyframes zoom-in {
+    from {
+      transform: scale(0.95);
+      opacity: 0
+    }
+
+    to {
+      transform: scale(1);
+      opacity: 1
+    }
+  }
+
+  @keyframes zoom-out {
+    from {
+      transform: scale(1);
+      opacity: 1
+    }
+
+    to {
+      transform: scale(0.95);
+      opacity: 0
+    }
+  }
+
+  @keyframes slide-in-from-top {
+    from {
+      transform: translateY(-100%)
+    }
+
+    to {
+      transform: translateY(0)
+    }
+  }
+
+  @keyframes slide-out-to-top {
+    from {
+      transform: translateY(0)
+    }
+
+    to {
+      transform: translateY(-100%)
+    }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+:root {
+  /*
+   * NEO-PREMIUM THEME (Light)
+   * Vibe: Clean, sophisticated, high-trust.
+   * Palette: Royal Blue Accent + Slate Neutrals.
+   */
+
+  /* Background: Pure White for maximum cleanliness */
+  --background: 0 0% 100%;
+  /* #FFFFFF */
+
+  /* Foreground: High contrast slate */
+  --foreground: 222 47% 11%;
+  /* #0F172A */
+
+  /* Card: Subtle off-white for separation or Pure White with shadow */
+  --card: 0 0% 100%;
+  /* #FFFFFF */
+  --card-foreground: 222 47% 11%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+
+  /* Primary: "Royal Electric Blue" (Vibrant but professional) */
+  --primary: 221 83% 53%;
+  /* #2563EB (closer to Blue-600) */
+  --primary-foreground: 210 40% 98%;
+
+  /* Secondary: Soft Slate Blue Gray */
+  --secondary: 210 40% 96.1%;
+  /* #F1F5F9 (Slate-100) */
+  --secondary-foreground: 222 47% 11.2%;
+
+  /* Muted: Subtle Gray */
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215 16% 47%;
+  /* Slate-500 */
+
+  /* Accent: Hover states */
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222 47% 11.2%;
+
+  /* Destructive */
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 40% 98%;
+
+  /* Border: Subtle and crisp - Darkened for visibility */
+  --border: 214 32% 85%;
+  /* Slightly darker Slate-200/300 mix */
+  --input: 214 32% 85%;
+
+  --ring: 221 83% 53%;
+  /* Match Primary */
+
+  --radius: 0.75rem;
+  /* default radius */
+}
+
+.dark {
+  /* 
+   * NEO-PREMIUM THEME (Dark)
+   * Vibe: Deep, Rich, OLED-friendly but dimensional.
+   */
+
+  /* Background: Deepest Slate/Zinc (Not pure black) */
+  --background: 224 71% 4%;
+  /* #020408 Approx */
+
+  /* Foreground: Soft White */
+  --foreground: 210 40% 98%;
+
+  /* Card: Slightly lighter rich dark */
+  --card: 222 47% 6%;
+  /* Very deep slate */
+  --card-foreground: 210 40% 98%;
+
+  --popover: 222 47% 6%;
+  --popover-foreground: 210 40% 98%;
+
+  /* Primary: Electric Blue (slightly lighter for dark mode) */
+  --primary: 217 91% 60%;
+  /* #3B82F6 (Blue-500) */
+  --primary-foreground: 222 47.4% 11.2%;
+
+  /* Secondary: Deep Slate */
+  --secondary: 217 32% 17%;
+  --secondary-foreground: 210 40% 98%;
+
+  --muted: 217 32% 17%;
+  --muted-foreground: 215 20% 65%;
+
+  --accent: 217 32% 17%;
+  --accent-foreground: 210 40% 98%;
+
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 210 40% 98%;
+
+  --border: 217 32% 25%;
+  --input: 217 32% 25%;
+
+  --ring: 224 76% 48%;
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+
+
+  /* Global Scrollbar Styles for HTML/Body */
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+
+  html::-webkit-scrollbar-track,
+  body::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  html::-webkit-scrollbar-thumb,
+  body::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/20 hover:bg-muted-foreground/40 rounded-full transition-colors;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased selection:bg-primary/20 selection:text-primary;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+@layer utilities {
+
+  /* Glassmorphism Utilities */
+  .glass {
+    @apply bg-white/70 dark:bg-black/40 backdrop-blur-xl border border-white/20 dark:border-white/5 shadow-xl;
+  }
+
+  .glass-card {
+    @apply bg-white/80 dark:bg-zinc-900/60 backdrop-blur-md border border-border/50 shadow-sm transition-all duration-300;
+  }
+
+  .glass-card:hover {
+    @apply bg-white/90 dark:bg-zinc-900/80 shadow-md -translate-y-[2px] border-primary/20;
+  }
+
+  /* Neo-Premium Shadows */
+  .shadow-neo {
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+  }
+
+  .shadow-neo-lg {
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.05), 0 4px 6px -4px rgb(0 0 0 / 0.05);
+  }
+
+  .shadow-neo-xl {
+    box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.05), 0 8px 10px -6px rgb(0 0 0 / 0.01);
+  }
+
+  /* Scrollbar */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-muted-foreground/20 hover:bg-muted-foreground/40 rounded-full transition-colors;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 }
