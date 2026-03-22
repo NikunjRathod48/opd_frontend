@@ -368,6 +368,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const [diagnoses, setDiagnoses] = useState<DiagnosisType[]>([]);
     const [medicines, setMedicines] = useState<Medicine[]>([]);
     const [tests, setTests] = useState<TestType[]>([]);
+    const [specializations, setSpecializations] = useState<Specialization[]>([]);
+    const [bloodGroups, setBloodGroups] = useState<BloodGroup[]>([]);
 
     const { user } = useAuth();
     const [states, setStates] = useState<State[]>([]);
@@ -403,6 +405,34 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             }
         } catch (err) {
             console.error("Failed to fetch doctors", err);
+        }
+    };
+
+    const fetchSpecializations = async () => {
+        try {
+            const data = await import("@/lib/api").then(m => m.api.get<any[]>("/doctors/specializations"));
+            if (Array.isArray(data)) {
+                setSpecializations(data.map(s => ({
+                    specializationid: s.specialization_id?.toString() || "",
+                    specializationname: s.specialization_name || "Unknown"
+                })));
+            }
+        } catch (err) {
+            console.error("Failed to fetch specializations", err);
+        }
+    };
+
+    const fetchBloodGroups = async () => {
+        try {
+            const data = await import("@/lib/api").then(m => m.api.get<any[]>("/master-data/blood_groups"));
+            if (Array.isArray(data)) {
+                setBloodGroups(data.map(b => ({
+                    bloodgroupid: b.blood_group_id?.toString() || "",
+                    bloodgroupname: b.blood_group_name || "Unknown"
+                })));
+            }
+        } catch (err) {
+            console.error("Failed to fetch blood groups", err);
         }
     };
 
@@ -764,6 +794,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         // --- Common to ALL authenticated users ---
         fetchDoctors();
         fetchAppointments();
+        fetchSpecializations();
+        fetchBloodGroups();
 
         // --- Role-specific fetches ---
         if (role === 'Patient') {
@@ -1097,7 +1129,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const contextValue: DataContextType = {
         hospitalGroups, hospitals, admins, doctors, receptionists, patients,
         treatments, subTreatments, appointments, opdVisits, receipts, diagnoses, medicines, tests,
-        bloodGroups: BLOOD_GROUPS, specializations: SPECIALIZATIONS,
+        bloodGroups: bloodGroups.length > 0 ? bloodGroups : BLOOD_GROUPS, specializations: specializations.length > 0 ? specializations : SPECIALIZATIONS,
         states, getCities,
         addHospitalGroup, updateHospitalGroup, addHospital, addAdmin, updateAdmin, toggleAdminStatus,
         addDoctor, updateDoctor, deleteDoctor,

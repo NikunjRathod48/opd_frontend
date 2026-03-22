@@ -10,6 +10,7 @@ import { IndianRupee, Users, Calendar, Activity, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { reportsService, DashboardAnalytics } from "@/services/reports-service";
 import { useToast } from "@/components/ui/toast";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const COLORS = ['#0ea5e9', '#22c55e', '#ef4444', '#eab308'];
 
@@ -23,37 +24,97 @@ export function ReportsView() {
     const [isLoading, setIsLoading] = useState(true);
     const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null);
 
+    const userRole = user?.role;
+    const hospitalId = user?.hospitalid;
+    const groupId = user?.hospitalgroupid;
+
     useEffect(() => {
+        let isMounted = true;
         const fetchAnalytics = async () => {
             setIsLoading(true);
             try {
-                // Determine scope
                 let hId = null;
                 let gId = null;
 
-                if (user?.role === 'HospitalAdmin') hId = user.hospitalid;
-                if (user?.role === 'GroupAdmin') gId = user.hospitalgroupid;
+                if (userRole === 'HospitalAdmin') hId = hospitalId;
+                if (userRole === 'GroupAdmin') gId = groupId;
 
                 const data = await reportsService.getDashboardAnalytics(hId, gId);
-                setAnalytics(data);
+                if (isMounted) setAnalytics(data);
             } catch (err: any) {
-                addToast("Failed to load dashboard analytics.", "error");
+                if (isMounted) addToast("Failed to load dashboard analytics.", "error");
                 console.error(err);
             } finally {
-                setIsLoading(false);
+                if (isMounted) setIsLoading(false);
             }
         };
 
-        if (user) {
+        if (userRole) {
             fetchAnalytics();
         }
-    }, [user, addToast]);
+        return () => { isMounted = false; };
+    }, [userRole, hospitalId, groupId, addToast]);
 
     if (isLoading || !analytics) {
         return (
-            <div className="flex flex-col items-center justify-center p-12 text-muted-foreground gap-3 absolute inset-0 bg-background/50 z-10 backdrop-blur-sm">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="font-medium animate-pulse">Loading Analytics Data...</p>
+            <div className="space-y-6">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="space-y-2">
+                        <Skeleton className="h-8 w-[250px]" />
+                        <Skeleton className="h-4 w-[350px]" />
+                    </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                    {[1, 2, 3, 4].map(i => (
+                        <Card key={i}>
+                            <CardHeader className="pb-2">
+                                <Skeleton className="h-4 w-24" />
+                            </CardHeader>
+                            <CardContent>
+                                <Skeleton className="h-8 w-32 mb-1.5" />
+                                <Skeleton className="h-3 w-40" />
+                            </CardContent>
+                        </Card>
+                    ))}
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
+                    <Card className="col-span-4">
+                        <CardHeader>
+                            <Skeleton className="h-5 w-40 mb-2" />
+                            <Skeleton className="h-4 w-60" />
+                        </CardHeader>
+                        <CardContent>
+                            <Skeleton className="h-[350px] w-full mt-2" />
+                        </CardContent>
+                    </Card>
+                    <Card className="col-span-3">
+                        <CardHeader>
+                            <Skeleton className="h-5 w-40 mb-2" />
+                            <Skeleton className="h-4 w-60" />
+                        </CardHeader>
+                        <CardContent>
+                            <div className="h-[350px] w-full flex items-center justify-center">
+                                <Skeleton className="h-[220px] w-[220px] rounded-full" />
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                    {[1, 2].map(i => (
+                        <Card key={i}>
+                            <CardHeader>
+                                <Skeleton className="h-5 w-40 mb-2" />
+                                <Skeleton className="h-4 w-60" />
+                            </CardHeader>
+                            <CardContent>
+                                <Skeleton className="h-[300px] w-full mt-2" />
+                            </CardContent>
+                        </Card>
+                    ))}
+                </div>
             </div>
         );
     }
@@ -150,8 +211,8 @@ export function ReportsView() {
                                         itemStyle={{ color: 'hsl(var(--popover-foreground))' }}
                                         formatter={(value: any) => [`₹${(value || 0).toLocaleString()}`, '']}
                                     />
-                                    <Area type="monotone" dataKey="revenue" stroke="#0ea5e9" fillOpacity={1} fill="url(#colorRevenue)" name="Revenue" />
-                                    <Area type="monotone" dataKey="expenses" stroke="#ef4444" fillOpacity={1} fill="url(#colorExpenses)" name="Expenses" />
+                                    <Area type="monotone" dataKey="revenue" stroke="#0ea5e9" fillOpacity={1} fill="url(#colorRevenue)" name="Revenue" isAnimationActive={false} />
+                                    <Area type="monotone" dataKey="expenses" stroke="#ef4444" fillOpacity={1} fill="url(#colorExpenses)" name="Expenses" isAnimationActive={false} />
                                     <Legend />
                                 </AreaChart>
                             </ResponsiveContainer>
@@ -175,6 +236,7 @@ export function ReportsView() {
                                         outerRadius={110}
                                         paddingAngle={5}
                                         dataKey="value"
+                                        isAnimationActive={false}
                                     >
                                         {analytics.appStatusData.map((entry, index) => (
                                             <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -212,7 +274,7 @@ export function ReportsView() {
                                         itemStyle={{ color: 'hsl(var(--popover-foreground))' }}
                                         formatter={(value: any) => [`₹${(value || 0).toLocaleString()}`, 'Revenue']}
                                     />
-                                    <Bar dataKey="revenue" fill="#0ea5e9" radius={[0, 4, 4, 0]} barSize={20} />
+                                    <Bar dataKey="revenue" fill="#0ea5e9" radius={[0, 4, 4, 0]} barSize={20} isAnimationActive={false} />
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>
@@ -235,7 +297,7 @@ export function ReportsView() {
                                         contentStyle={{ backgroundColor: 'hsl(var(--popover))', borderRadius: '8px', border: '1px solid hsl(var(--border))', color: 'hsl(var(--popover-foreground))' }}
                                         itemStyle={{ color: 'hsl(var(--popover-foreground))' }}
                                     />
-                                    <Bar dataKey="visits" fill="#22c55e" radius={[4, 4, 0, 0]} name="Visits" />
+                                    <Bar dataKey="visits" fill="#22c55e" radius={[4, 4, 0, 0]} name="Visits" isAnimationActive={false} />
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>

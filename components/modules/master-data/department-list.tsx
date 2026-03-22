@@ -15,6 +15,7 @@ import { useAuth } from "@/context/auth-context";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Department } from "@/types/clinical";
 import { clinicalService } from "@/services/clinical-service";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export function DepartmentList() {
     const { user } = useAuth();
@@ -200,9 +201,32 @@ export function DepartmentList() {
 
             {/* Loading State */}
             {isLoading ? (
-                <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-                    {[1, 2, 3].map(i => (
-                        <div key={i} className="h-48 rounded-xl border border-border/40 bg-muted/10 animate-pulse" />
+                <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3 items-start">
+                    {[1, 2, 3, 4, 5, 6].map(i => (
+                        <Card key={i} className="flex flex-col overflow-hidden border-border/60 bg-white dark:bg-slate-900 shadow-sm rounded-2xl">
+                            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2">
+                                <div className="flex items-center gap-3 w-full">
+                                    <Skeleton className="h-10 w-10 rounded-xl shrink-0" />
+                                    <div className="flex-1 space-y-2">
+                                        <Skeleton className="h-4 w-3/4" />
+                                        <Skeleton className="h-3 w-1/3" />
+                                    </div>
+                                </div>
+                                <Skeleton className="h-8 w-8 rounded-md shrink-0 ml-4" />
+                            </CardHeader>
+                            <CardContent className="pt-2">
+                                <div className="space-y-2 min-h-[40px]">
+                                    <Skeleton className="h-3 w-full" />
+                                    <Skeleton className="h-3 w-4/5" />
+                                </div>
+                                {isHospitalAdmin && (
+                                    <div className="mt-4 pt-4 border-t border-border/40 flex items-center justify-between">
+                                        <Skeleton className="h-3 w-12" />
+                                        <Skeleton className="h-5 w-16 rounded-full" />
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
                     ))}
                 </div>
             ) : (

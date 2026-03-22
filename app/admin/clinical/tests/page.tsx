@@ -15,8 +15,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useAuth } from "@/context/auth-context";
-import { Search, PackagePlus, Loader2 } from "lucide-react";
+import { Search, PackagePlus, Loader2, FlaskConical, X } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import { motion } from "framer-motion";
 
 export default function TestsPage() {
     const { addToast } = useToast();
@@ -192,181 +194,310 @@ export default function TestsPage() {
 
     return (
         <RoleGuard allowedRoles={["SuperAdmin", "HospitalAdmin", "GroupAdmin"]}>
-        <>
-            {isHospitalAdmin && !isLoading && tests.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center h-[calc(100vh-6rem)] bg-slate-50/50 dark:bg-slate-950/50">
-                    <div className="text-center max-w-md p-8 bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-slate-100 dark:border-slate-800">
-                        <div className="w-24 h-24 bg-sky-50 dark:bg-sky-900/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                            <PackagePlus className="w-12 h-12 text-sky-500" />
-                        </div>
-                        <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-sky-600 to-indigo-600 mb-3">
-                            Empty Test Catalog
-                        </h2>
-                        <p className="text-muted-foreground mb-8">
-                            Your hospital currently has no tests configured. Browse the master catalog to verify and link standard tests.
-                        </p>
-                        <Button
-                            size="lg"
-                            className="w-full bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 text-white shadow-lg shadow-sky-500/25 transition-all group"
-                            onClick={() => {
-                                setIsCatalogOpen(true);
-                                fetchCatalogTests();
-                            }}
-                        >
-                            <PackagePlus className="md:mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
-                            Browse Master Catalog
-                        </Button>
-                    </div>
-                </div>
-            ) : (
-                <ClinicalMasterLayout<Department, Test>
-                    title="Pathology Tests Master"
-                    description="Manage lab departments and available tests."
-                    categoryLabel="Department"
-                    itemLabel="Test"
-                    categories={departments}
-                    items={tests}
-                    isLoading={isLoading}
-                    selectedCategory={selectedDepartment}
-                    onSelectCategory={setSelectedDepartment}
-
-                    // Helpers
-                    getCategoryId={(c) => c.department_id}
-                    getCategoryName={(c) => c.department_name}
-                    getItemId={(i) => i.test_id}
-                    getItemName={(i) => i.test_name}
-                    getItemCount={(cat) => tests.filter(t => t.department_id === cat.department_id).length}
-                    // Filter logic: Item must belong to selected category AND match search query
-                    filterItem={(item, query) => {
-                        const matchesCategory = selectedDepartment ? item.department_id === selectedDepartment.department_id : false;
-                        const testName = item.test_name || "";
-                        const testCode = item.test_code || "";
-                        const matchesSearch = testName.toLowerCase().includes(query.toLowerCase()) ||
-                            testCode.toLowerCase().includes(query.toLowerCase());
-                        return matchesCategory && matchesSearch;
-                    }}
-
-                    // Renderers
-                    renderItemCard={renderTestCard}
-                    renderItemForm={(initialData, category, onClose) => (
-                        <TestForm
-                            initialData={initialData}
-                            category={category}
-                            onClose={onClose}
-                            departments={departments}
-                            onSubmit={async (data) => {
-                                if (initialData.test_id) {
-                                    await handleEditItem(initialData as Test, data);
-                                } else {
-                                    await handleAddItem(data);
-                                }
-                                onClose();
-                            }}
-                            isHospitalAdmin={isHospitalAdmin}
-                        />
-                    )}
-
-                    // Actions
-                    onAddItem={!isHospitalAdmin ? handleAddItem : undefined}
-                    onEditItem={handleEditItem}
-                    // Custom Slots
-                    headerActions={
-                        isHospitalAdmin && (
-                            <Tooltip content="Browse Master Catalog">
-                                <Button
-                                    variant="outline"
-                                    className="bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100 dark:bg-sky-900/20 dark:border-sky-800/50"
-                                    onClick={() => {
-                                        setIsCatalogOpen(true);
-                                        fetchCatalogTests();
-                                    }}
-                                >
-                                    <PackagePlus className="md:mr-2 h-4 w-4" />
-                                    <span className="hidden md:inline">Browse Catalog</span>
-                                </Button>
-                            </Tooltip>
-                        )
-                    }
-                />
-            )}
-
-            {/* Master Catalog Dialog (Hospital Admins Only) */}
-            {isHospitalAdmin && (
-                <Dialog open={isCatalogOpen} onOpenChange={setIsCatalogOpen}>
-                    <DialogContent className="sm:max-w-[700px] h-[80vh] flex flex-col p-0 gap-0 overflow-hidden bg-white/95 backdrop-blur-xl border-slate-200">
-                        <div className="p-6 border-b border-slate-100 bg-slate-50/50">
-                            <DialogTitle className="text-xl font-bold">Master Test Catalog</DialogTitle>
-                            <DialogDescription className="mt-1 flex items-center gap-2">
-                                <Search className="h-4 w-4 text-muted-foreground" />
-                                Browse and add standard tests to your hospital.
-                            </DialogDescription>
-                            <div className="mt-4 relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                <Input
-                                    placeholder="Search catalog by name or code..."
-                                    className="pl-9 bg-slate-50 border-slate-200"
-                                    value={catalogSearch}
-                                    onChange={(e) => setCatalogSearch(e.target.value)}
-                                />
+            <>
+                {isHospitalAdmin && !isLoading && tests.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center h-[calc(100vh-6rem)] bg-slate-50/50 dark:bg-slate-950/50">
+                        <div className="text-center max-w-md p-8 bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-slate-100 dark:border-slate-800">
+                            <div className="w-24 h-24 bg-sky-50 dark:bg-sky-900/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                                <PackagePlus className="w-12 h-12 text-sky-500" />
                             </div>
+                            <h2 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-sky-600 to-indigo-600 mb-3">
+                                Empty Test Catalog
+                            </h2>
+                            <p className="text-muted-foreground mb-8">
+                                Your hospital currently has no tests configured. Browse the master catalog to verify and link standard tests.
+                            </p>
+                            <Button
+                                size="lg"
+                                className="w-full bg-gradient-to-r from-sky-600 to-indigo-600 hover:from-sky-700 hover:to-indigo-700 text-white shadow-lg shadow-sky-500/25 transition-all group"
+                                onClick={() => {
+                                    setIsCatalogOpen(true);
+                                    fetchCatalogTests();
+                                }}
+                            >
+                                <PackagePlus className="md:mr-2 h-5 w-5 group-hover:scale-110 transition-transform" />
+                                Browse Master Catalog
+                            </Button>
                         </div>
+                    </div>
+                ) : (
+                    <ClinicalMasterLayout<Department, Test>
+                        title="Pathology Tests Master"
+                        description="Manage lab departments and available tests."
+                        categoryLabel="Department"
+                        itemLabel="Test"
+                        categories={departments}
+                        items={tests}
+                        isLoading={isLoading}
+                        selectedCategory={selectedDepartment}
+                        onSelectCategory={setSelectedDepartment}
 
-                        <ScrollArea className="flex-1 -mx-6 px-6 relative">
-                            {catalogLoading ? (
-                                <div className="space-y-4">
-                                    {[1, 2, 3].map(i => (
-                                        <div key={i} className="h-20 bg-slate-100 dark:bg-slate-800 animate-pulse rounded-xl" />
-                                    ))}
+                        // Helpers
+                        getCategoryId={(c) => c.department_id}
+                        getCategoryName={(c) => c.department_name}
+                        getItemId={(i) => i.test_id}
+                        getItemName={(i) => i.test_name}
+                        getItemCount={(cat) => tests.filter(t => t.department_id === cat.department_id).length}
+                        // Filter logic: Item must belong to selected category AND match search query
+                        filterItem={(item, query) => {
+                            const matchesCategory = selectedDepartment ? item.department_id === selectedDepartment.department_id : false;
+                            const testName = item.test_name || "";
+                            const testCode = item.test_code || "";
+                            const matchesSearch = testName.toLowerCase().includes(query.toLowerCase()) ||
+                                testCode.toLowerCase().includes(query.toLowerCase());
+                            return matchesCategory && matchesSearch;
+                        }}
+
+                        // Renderers
+                        renderItemCard={renderTestCard}
+                        renderItemForm={(initialData, category, onClose) => (
+                            <TestForm
+                                initialData={initialData}
+                                category={category}
+                                onClose={onClose}
+                                departments={departments}
+                                onSubmit={async (data) => {
+                                    if (initialData.test_id) {
+                                        await handleEditItem(initialData as Test, data);
+                                    } else {
+                                        await handleAddItem(data);
+                                    }
+                                    onClose();
+                                }}
+                                isHospitalAdmin={isHospitalAdmin}
+                            />
+                        )}
+
+                        // Actions
+                        onAddItem={!isHospitalAdmin ? handleAddItem : undefined}
+                        onEditItem={handleEditItem}
+                        // Custom Slots
+                        headerActions={
+                            isHospitalAdmin && (
+                                <Tooltip content="Browse Master Catalog">
+                                    <Button
+                                        variant="outline"
+                                        className="bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100 dark:bg-sky-900/20 dark:border-sky-800/50"
+                                        onClick={() => {
+                                            setIsCatalogOpen(true);
+                                            fetchCatalogTests();
+                                        }}
+                                    >
+                                        <PackagePlus className="md:mr-2 h-4 w-4" />
+                                        <span className="hidden md:inline">Browse Catalog</span>
+                                    </Button>
+                                </Tooltip>
+                            )
+                        }
+                    />
+                )}
+
+                {/* Master Catalog Dialog (Hospital Admins Only) */}
+                {isHospitalAdmin && (
+                    <Dialog open={isCatalogOpen} onOpenChange={setIsCatalogOpen}>
+                        <DialogContent className="sm:max-w-[660px] h-[82vh] flex flex-col p-0 gap-0 overflow-hidden border-0 shadow-2xl rounded-2xl bg-card [&>button]:hidden">
+
+                            {/* ── Gradient Header ── */}
+                            <div className="relative overflow-hidden bg-gradient-to-r from-cyan-600 to-sky-600 px-6 pt-6 pb-5 shrink-0">
+                                <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-3xl pointer-events-none" />
+                                <div className="absolute bottom-0 left-20 h-14 w-14 rounded-full bg-sky-400/20 blur-2xl pointer-events-none" />
+
+                                <div className="relative z-10 flex items-start justify-between gap-4">
+                                    <div className="flex items-center gap-3.5">
+                                        <div className="h-10 w-10 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0">
+                                            <FlaskConical className="h-5 w-5 text-white" />
+                                        </div>
+                                        <div>
+                                            <DialogTitle className="text-lg font-bold text-white leading-tight">
+                                                Master Test Catalog
+                                            </DialogTitle>
+                                            <DialogDescription className="text-cyan-100 text-xs mt-0.5">
+                                                Browse and link standard tests to your hospital
+                                            </DialogDescription>
+                                        </div>
+                                    </div>
+                                    <button
+                                        className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition-all shrink-0 mt-0.5"
+                                        onClick={() => setIsCatalogOpen(false)}
+                                    >
+                                        <X className="h-4 w-4" />
+                                    </button>
                                 </div>
-                            ) : (
-                                <div className="flex flex-col gap-3">
-                                    {catalogTests
-                                        .filter(t => {
+
+                                {/* Search bar inside header */}
+                                <div className="relative z-10 mt-4">
+                                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-white/50 pointer-events-none" />
+                                    <input
+                                        placeholder="Search by name or code..."
+                                        value={catalogSearch}
+                                        onChange={e => setCatalogSearch(e.target.value)}
+                                        className="w-full h-10 pl-10 pr-4 rounded-xl bg-white/15 border border-white/20
+                                   text-white placeholder:text-white/50 text-sm
+                                   focus:outline-none focus:bg-white/20 focus:border-white/40
+                                   transition-all"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* ── Content ── */}
+                            <ScrollArea className="flex-1 min-h-0">
+                                <div className="p-4 space-y-2">
+
+                                    {/* ── Loading skeletons — mirror exact row structure ── */}
+                                    {catalogLoading && (
+                                        <>
+                                            {[...Array(5)].map((_, i) => (
+                                                <div
+                                                    key={i}
+                                                    className="flex items-center gap-4 p-4 rounded-2xl border border-border/50 bg-card animate-pulse"
+                                                    style={{ animationDelay: `${i * 60}ms` }}
+                                                >
+                                                    {/* Icon placeholder */}
+                                                    <div className="h-10 w-10 rounded-xl bg-muted/60 shrink-0" />
+                                                    {/* Text block */}
+                                                    <div className="flex-1 space-y-2 min-w-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <div className="h-4 w-14 rounded-full bg-muted/60" />
+                                                            <div className="h-4 w-40 rounded-full bg-muted/60" />
+                                                        </div>
+                                                        <div className="flex gap-2">
+                                                            <div className="h-3 w-16 rounded-full bg-muted/40" />
+                                                            <div className="h-3 w-28 rounded-full bg-muted/40" />
+                                                        </div>
+                                                    </div>
+                                                    {/* Price + button */}
+                                                    <div className="shrink-0 flex items-center gap-3">
+                                                        <div className="hidden sm:flex flex-col gap-1.5 items-end">
+                                                            <div className="h-3 w-16 rounded-full bg-muted/40" />
+                                                            <div className="h-4 w-12 rounded-full bg-muted/60" />
+                                                        </div>
+                                                        <div className="h-8 w-20 rounded-xl bg-muted/60" />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </>
+                                    )}
+
+                                    {/* ── Test rows ── */}
+                                    {!catalogLoading && (() => {
+                                        const filtered = catalogTests.filter(t => {
                                             const name = t.test_name || "";
                                             const code = t.test_code || "";
                                             return name.toLowerCase().includes(catalogSearch.toLowerCase()) ||
                                                 code.toLowerCase().includes(catalogSearch.toLowerCase());
-                                        })
-                                        .map(test => (
-                                            <div key={test.test_id} className="flex items-center justify-between p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl hover:border-sky-300 transition-colors shadow-sm">
-                                                <div>
-                                                    <div className="flex items-center gap-2 mb-1">
-                                                        <Badge variant="outline" className="text-[10px] bg-slate-50">{test.test_code}</Badge>
-                                                        <h4 className="font-semibold">{test.test_name}</h4>
+                                        });
+
+                                        if (filtered.length === 0) {
+                                            return (
+                                                <div className="flex flex-col items-center justify-center py-16 text-center">
+                                                    <div className="h-14 w-14 rounded-2xl bg-cyan-50 dark:bg-cyan-950/40 border border-cyan-100 dark:border-cyan-900 flex items-center justify-center mb-3">
+                                                        <FlaskConical className="h-6 w-6 text-cyan-400" />
                                                     </div>
-                                                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                                    <p className="text-sm font-semibold text-foreground/70">
+                                                        {catalogSearch
+                                                            ? "No tests match your search"
+                                                            : "All available tests have been added"
+                                                        }
+                                                    </p>
+                                                    {catalogSearch && (
+                                                        <button
+                                                            onClick={() => setCatalogSearch("")}
+                                                            className="mt-3 text-xs font-semibold text-cyan-600 hover:text-cyan-700 transition-colors"
+                                                        >
+                                                            Clear search
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            );
+                                        }
+
+                                        return filtered.map((test, i) => (
+                                            <motion.div
+                                                key={test.test_id}
+                                                initial={{ opacity: 0, y: 6 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                transition={{ delay: i * 0.03, duration: 0.25 }}
+                                                className="group flex items-center gap-4 p-4 rounded-2xl border border-border/50 bg-card
+                                           hover:border-cyan-200 dark:hover:border-cyan-800
+                                           hover:shadow-[0_2px_12px_rgba(8,145,178,0.08)]
+                                           transition-all duration-200"
+                                            >
+                                                {/* Icon */}
+                                                <div className="h-10 w-10 rounded-xl bg-cyan-50 dark:bg-cyan-950/40 border border-cyan-100 dark:border-cyan-900
+                                                text-cyan-600 dark:text-cyan-400 flex items-center justify-center shrink-0
+                                                group-hover:bg-cyan-100 dark:group-hover:bg-cyan-900/60 transition-colors">
+                                                    <FlaskConical className="h-[18px] w-[18px]" />
+                                                </div>
+
+                                                {/* Info */}
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                                        <span className="inline-flex items-center rounded-md bg-muted/60 border border-border/60 px-2 py-0.5 text-[10px] font-semibold text-muted-foreground catalog-mono">
+                                                            {test.test_code}
+                                                        </span>
+                                                        <span className="text-sm font-semibold text-foreground/90 truncate">{test.test_name}</span>
+                                                    </div>
+                                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
                                                         <span>{test.test_type}</span>
-                                                        {test.description && <span className="max-w-[200px] truncate">• {test.description}</span>}
+                                                        {test.description && (
+                                                            <><span className="opacity-40">·</span><span className="truncate max-w-[200px]">{test.description}</span></>
+                                                        )}
                                                     </div>
                                                 </div>
-                                                <div className="flex items-center gap-4">
-                                                    <div className="text-right hidden sm:block">
-                                                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Base Price</p>
-                                                        <p className="font-bold text-sm">₹{test.price || 0}</p>
+
+                                                {/* Price + action */}
+                                                <div className="flex items-center gap-3 shrink-0">
+                                                    <div className="hidden sm:flex flex-col items-end">
+                                                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Base Price</p>
+                                                        <p className="text-sm font-bold text-foreground catalog-mono">₹{test.price || 0}</p>
                                                     </div>
-                                                    <Button
-                                                        size="sm"
+                                                    <button
                                                         onClick={() => handleLinkTest(test)}
-                                                        className="bg-sky-600 hover:bg-sky-700 text-white shadow-sm"
+                                                        className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-xl
+                                                   bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-semibold
+                                                   shadow-[0_2px_8px_rgba(8,145,178,0.3)] hover:shadow-[0_4px_12px_rgba(8,145,178,0.4)]
+                                                   transition-all"
                                                     >
-                                                        <PackagePlus className="h-4 w-4 mr-1" /> Add
-                                                    </Button>
+                                                        <PackagePlus className="h-3.5 w-3.5" />
+                                                        Add
+                                                    </button>
                                                 </div>
-                                            </div>
-                                        ))}
-                                    {catalogTests.length === 0 && (
-                                        <div className="text-center py-10 text-muted-foreground">
-                                            All available tests have been added to your hospital.
-                                        </div>
-                                    )}
+                                            </motion.div>
+                                        ));
+                                    })()}
+                                </div>
+                            </ScrollArea>
+
+                            {/* ── Footer ── */}
+                            {!catalogLoading && (
+                                <div className="shrink-0 px-6 py-3.5 border-t border-border/50 bg-muted/10 flex items-center justify-between">
+                                    <p className="text-xs font-medium text-muted-foreground">
+                                        {(() => {
+                                            const count = catalogTests.filter(t =>
+                                                (t.test_name || "").toLowerCase().includes(catalogSearch.toLowerCase()) ||
+                                                (t.test_code || "").toLowerCase().includes(catalogSearch.toLowerCase())
+                                            ).length;
+                                            return (
+                                                <>
+                                                    <span className="font-bold text-foreground">{count}</span>
+                                                    {" "}test{count !== 1 ? "s" : ""}
+                                                    {catalogSearch ? " matched" : " available"}
+                                                </>
+                                            );
+                                        })()}
+                                    </p>
+                                    <button
+                                        onClick={() => setIsCatalogOpen(false)}
+                                        className="h-8 px-4 rounded-xl border border-border/60 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-all"
+                                    >
+                                        Close
+                                    </button>
                                 </div>
                             )}
-                        </ScrollArea>
-                    </DialogContent >
-                </Dialog >
-            )
-            }
-        </>
+                        </DialogContent>
+                    </Dialog>
+                )}
+            </>
         </RoleGuard>
     );
 }

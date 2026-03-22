@@ -90,6 +90,21 @@ export function AddHospitalModal({ isOpen, onClose, onSuccess, initialGroupId, i
                 // If editing, reset form with initialData
                 const formattedDate = initialData.opening_date ? new Date(initialData.opening_date).toISOString().split('T')[0] : "";
 
+                const formatTimeString = (timeStr: string | undefined) => {
+                    if (!timeStr) return undefined;
+                    if (timeStr.includes('T')) {
+                        const d = new Date(timeStr);
+                        if (!isNaN(d.getTime())) {
+                            return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+                        }
+                    }
+                    // Handle "HH:mm:ss" format
+                    if (timeStr.split(':').length >= 2) {
+                        return timeStr.slice(0, 5);
+                    }
+                    return timeStr;
+                };
+
                 form.reset({
                     ...initialData,
                     hospital_group_id: initialData.hospital_group_id ? Number(initialData.hospital_group_id) : undefined,
@@ -97,6 +112,8 @@ export function AddHospitalModal({ isOpen, onClose, onSuccess, initialGroupId, i
                     state_id: initialData.state_id ? Number(initialData.state_id) : (initialData.state?.id ? Number(initialData.state.id) : undefined),
                     registration_validity_months: initialData.registration_validity_months ? Number(initialData.registration_validity_months) : 0,
                     opening_date: formattedDate,
+                    opening_time: formatTimeString(initialData.opening_time) || "09:00",
+                    closing_time: formatTimeString(initialData.closing_time) || "18:00",
                 });
             } else {
                 // Determine default group ID
@@ -216,8 +233,8 @@ export function AddHospitalModal({ isOpen, onClose, onSuccess, initialGroupId, i
     const is24by7 = form.watch("is_24by7");
     useEffect(() => {
         if (is24by7) {
-            form.setValue("opening_time", "00:00");
-            form.setValue("closing_time", "23:59");
+            form.setValue("opening_time", "00:00", { shouldDirty: true });
+            form.setValue("closing_time", "23:59", { shouldDirty: true });
         }
     }, [is24by7, form]);
 
@@ -280,7 +297,7 @@ export function AddHospitalModal({ isOpen, onClose, onSuccess, initialGroupId, i
                                             <SearchableSelect
                                                 options={groupOptions}
                                                 value={form.watch("hospital_group_id")?.toString() || ""}
-                                                onChange={(val) => form.setValue("hospital_group_id", Number(val))}
+                                                onChange={(val) => form.setValue("hospital_group_id", Number(val), { shouldDirty: true, shouldValidate: true })}
                                                 placeholder="Select Group"
                                                 className="w-full rounded-xl h-10"
                                                 disabled={isGroupLocked}
@@ -292,7 +309,7 @@ export function AddHospitalModal({ isOpen, onClose, onSuccess, initialGroupId, i
                                             <Label className="text-xs text-muted-foreground font-bold uppercase tracking-wider ml-1">Opening Date <span className="text-red-500">*</span></Label>
                                             <DatePicker
                                                 value={form.watch("opening_date")}
-                                                onChange={(date) => form.setValue("opening_date", date)}
+                                                onChange={(date) => form.setValue("opening_date", date, { shouldDirty: true, shouldValidate: true })}
                                                 placeholder="Date"
                                                 className="w-full rounded-xl h-10"
                                             />
@@ -324,8 +341,8 @@ export function AddHospitalModal({ isOpen, onClose, onSuccess, initialGroupId, i
                                                     options={states}
                                                     value={form.watch("state_id")?.toString() || ""}
                                                     onChange={(val) => {
-                                                        form.setValue("state_id", Number(val));
-                                                        form.setValue("city_id", undefined); // Reset city
+                                                        form.setValue("state_id", Number(val), { shouldDirty: true, shouldValidate: true });
+                                                        form.setValue("city_id", undefined, { shouldDirty: true, shouldValidate: true }); // Reset city
                                                     }}
                                                     placeholder={loadingStates ? "..." : "Select State"}
                                                     className="w-full rounded-xl h-10"
@@ -337,7 +354,7 @@ export function AddHospitalModal({ isOpen, onClose, onSuccess, initialGroupId, i
                                                 <SearchableSelect
                                                     options={cities}
                                                     value={form.watch("city_id")?.toString() || ""}
-                                                    onChange={(val) => form.setValue("city_id", Number(val))}
+                                                    onChange={(val) => form.setValue("city_id", Number(val), { shouldDirty: true, shouldValidate: true })}
                                                     placeholder={loadingCities ? "..." : "Select City"}
                                                     className="w-full rounded-xl h-10"
                                                     emptyMessage={selectedStateId ? "No cities" : "Select State"}
@@ -405,7 +422,7 @@ export function AddHospitalModal({ isOpen, onClose, onSuccess, initialGroupId, i
                                                 <Label className={cn("text-xs text-muted-foreground font-bold uppercase tracking-wider ml-1", is24by7 && "opacity-50")}>Opens At</Label>
                                                 <TimePicker
                                                     value={form.watch("opening_time") || "09:00"}
-                                                    onChange={(val) => form.setValue("opening_time", val)}
+                                                    onChange={(val) => form.setValue("opening_time", val, { shouldDirty: true, shouldValidate: true })}
                                                     disabled={is24by7}
                                                 />
                                             </div>
@@ -413,7 +430,7 @@ export function AddHospitalModal({ isOpen, onClose, onSuccess, initialGroupId, i
                                                 <Label className={cn("text-xs text-muted-foreground font-bold uppercase tracking-wider ml-1", is24by7 && "opacity-50")}>Closes At</Label>
                                                 <TimePicker
                                                     value={form.watch("closing_time") || "18:00"}
-                                                    onChange={(val) => form.setValue("closing_time", val)}
+                                                    onChange={(val) => form.setValue("closing_time", val, { shouldDirty: true, shouldValidate: true })}
                                                     disabled={is24by7}
                                                 />
                                             </div>

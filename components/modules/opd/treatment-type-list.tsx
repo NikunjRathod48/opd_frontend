@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, Tag, Pencil, Trash2, Stethoscope, IndianRupee, Layers, MoreVertical, Link as LinkIcon, AlertCircle, CheckCircle2, X, Loader2 } from "lucide-react";
+import { Plus, Search, Tag, Pencil, Trash2, Stethoscope, IndianRupee, Layers, MoreVertical, Link as LinkIcon, AlertCircle, CheckCircle2, X, Loader2, ChevronRight } from "lucide-react";
 import { useToast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -18,6 +18,8 @@ import { useAuth } from "@/context/auth-context";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
+import { motion } from "framer-motion";
 
 // --- Types ---
 interface TreatmentType {
@@ -468,8 +470,33 @@ export function TreatmentTypeList() {
             {/* Loading State */}
             {isLoading ? (
                 <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
-                    {[1, 2, 3].map(i => (
-                        <div key={i} className="h-64 rounded-xl border border-border/40 bg-muted/10 animate-pulse" />
+                    {[1, 2, 3, 4, 5, 6].map(i => (
+                        <Card key={i} className="flex flex-col overflow-hidden border-border/60 bg-white dark:bg-slate-900 shadow-sm rounded-2xl">
+                            <CardHeader className="bg-slate-50/50 dark:bg-slate-950/50 pb-3 pt-4 px-5 flex flex-row items-center space-y-0 relative border-b border-border/40">
+                                <div className="flex items-center gap-3 overflow-hidden w-full">
+                                    <Skeleton className="h-10 w-10 rounded-xl shrink-0" />
+                                    <div className="min-w-0 flex-1 space-y-2">
+                                        <Skeleton className="h-4 w-3/4" />
+                                        <Skeleton className="h-3 w-1/3" />
+                                    </div>
+                                </div>
+                            </CardHeader>
+                            <CardContent className="p-0 flex-1 flex flex-col min-h-[50px]">
+                                <div className="divide-y divide-border/40">
+                                    {[1, 2, 3].map(j => (
+                                        <div key={j} className="flex items-center justify-between p-3.5">
+                                            <div className="min-w-0 pr-3 flex flex-col flex-1 space-y-2">
+                                                <Skeleton className="h-4 w-2/3" />
+                                                <Skeleton className="h-3 w-1/4" />
+                                            </div>
+                                            <div className="shrink-0 flex items-center justify-end w-20">
+                                                <Skeleton className="h-4 w-12" />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </CardContent>
+                        </Card>
                     ))}
                 </div>
             ) : (
@@ -759,21 +786,40 @@ export function TreatmentTypeList() {
 
             {/* Catalog Browser Modal (Hospital Admin) */}
             <Dialog open={isCatalogOpen} onOpenChange={setIsCatalogOpen}>
-                <DialogContent className="w-[95%] sm:w-full sm:max-w-[950px] h-[90vh] sm:h-[85vh] flex flex-col p-0 gap-0 overflow-hidden bg-background/95 backdrop-blur-xl border-border/50 shadow-2xl rounded-xl">
-                    <div className="p-4 md:p-6 border-b border-border/40 bg-slate-50/50 dark:bg-slate-950/50 shrink-0">
-                        <DialogTitle className="text-xl font-bold tracking-tight">Service Catalog</DialogTitle>
-                        <DialogDescription className="text-muted-foreground mt-1">
-                            Browse and add standard services to your hospital.
-                        </DialogDescription>
+                <DialogContent className="w-[95%] sm:w-full sm:max-w-[960px] h-[90vh] sm:h-[86vh] flex flex-col p-0 gap-0 overflow-hidden border-0 shadow-2xl rounded-2xl bg-card [&>button]:hidden">
 
-                        <div className="mt-4 flex flex-col md:flex-row gap-3">
-                            {/* Mobile Category Select */}
-                            <div className="md:hidden w-full">
+                    {/* ── Gradient Header ── */}
+                    <div className="relative overflow-hidden bg-gradient-to-r from-blue-600 to-indigo-600 px-6 pt-6 pb-5 shrink-0">
+                        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-3xl pointer-events-none" />
+                        <div className="absolute bottom-0 left-24 h-14 w-14 rounded-full bg-indigo-400/20 blur-2xl pointer-events-none" />
+
+                        <div className="relative z-10 flex items-start justify-between gap-4">
+                            <div className="flex items-center gap-3.5">
+                                <div className="h-10 w-10 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0">
+                                    <Layers className="h-5 w-5 text-white" />
+                                </div>
+                                <div>
+                                    <DialogTitle className="text-lg font-bold text-white leading-tight">Service Catalog</DialogTitle>
+                                    <DialogDescription className="text-blue-200 text-xs mt-0.5">Browse and link standard services to your hospital</DialogDescription>
+                                </div>
+                            </div>
+                            <button
+                                className="h-8 w-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/70 hover:text-white transition-all shrink-0 mt-0.5"
+                                onClick={() => setIsCatalogOpen(false)}
+                            >
+                                <X className="h-4 w-4" />
+                            </button>
+                        </div>
+
+                        {/* Search + mobile category */}
+                        <div className="relative z-10 mt-4 flex flex-col sm:flex-row gap-2.5">
+                            {/* Mobile category picker */}
+                            <div className="sm:hidden">
                                 <Select
                                     value={formData.parentId || "all"}
-                                    onValueChange={(val) => setFormData({ ...formData, parentId: val === "all" ? "" : val })}
+                                    onValueChange={val => setFormData({ ...formData, parentId: val === "all" ? "" : val })}
                                 >
-                                    <SelectTrigger className="w-full bg-white dark:bg-slate-900">
+                                    <SelectTrigger className="h-10 rounded-xl bg-white/15 border-white/20 text-white text-sm focus:ring-0">
                                         <SelectValue placeholder="All Categories" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -788,206 +834,267 @@ export function TreatmentTypeList() {
                             </div>
 
                             <div className="relative flex-1">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                <Input
+                                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-white/50 pointer-events-none" />
+                                <input
                                     placeholder="Search services..."
-                                    className="pl-9 bg-white dark:bg-slate-900 border-border/60 focus:ring-primary/20 rounded-xl"
                                     value={catalogSearch}
-                                    onChange={(e) => setCatalogSearch(e.target.value)}
+                                    onChange={e => setCatalogSearch(e.target.value)}
+                                    className="w-full h-10 pl-10 pr-4 rounded-xl bg-white/15 border border-white/20
+                                   text-white placeholder:text-white/50 text-sm
+                                   focus:outline-none focus:bg-white/20 focus:border-white/40 transition-all"
                                 />
                             </div>
                         </div>
                     </div>
 
-                    <div className="flex-1 flex overflow-hidden relative">
-                        {/* 1. Category Sidebar (Desktop) */}
-                        <div className="hidden md:flex w-[240px] border-r border-border/40 flex-col bg-slate-50/30 dark:bg-slate-900/10">
-                            <div className="p-3 font-medium text-[11px] text-muted-foreground uppercase tracking-wider opacity-80 pl-4">
-                                Categories
-                            </div>
-                            <ScrollArea className="flex-1 px-2 scrollbar-thin">
-                                <div className="space-y-1 pb-4">
-                                    <Button
-                                        variant={!formData.parentId ? "secondary" : "ghost"}
-                                        size="sm"
-                                        className={cn(
-                                            "w-full justify-start text-sm font-medium",
-                                            !formData.parentId && "bg-white dark:bg-slate-800 shadow-sm text-primary"
-                                        )}
+                    {/* ── 3-Panel Body ── */}
+                    <div className="flex-1 flex overflow-hidden min-h-0">
+
+                        {/* ── Panel 1: Category Sidebar (desktop only) ── */}
+                        <div className="hidden md:flex w-[220px] shrink-0 flex-col border-r border-border/50 bg-muted/20">
+                            <p className="px-4 pt-4 pb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Categories</p>
+                            <ScrollArea className="flex-1 px-2 pb-4">
+                                <div className="space-y-0.5">
+                                    {/* All */}
+                                    <button
                                         onClick={() => setFormData({ ...formData, parentId: "" })}
+                                        className={cn(
+                                            "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all text-left",
+                                            !formData.parentId
+                                                ? "bg-background text-foreground shadow-sm border border-border/60"
+                                                : "text-muted-foreground hover:text-foreground hover:bg-background/60"
+                                        )}
                                     >
-                                        <Layers className="h-4 w-4 mr-2 opacity-70" /> All Categories
-                                    </Button>
-                                    {treatments.map(t => (
-                                        <Button
+                                        <Layers className="h-4 w-4 shrink-0 opacity-70" />
+                                        <span className="truncate">All Categories</span>
+                                    </button>
+
+                                    {/* Category skeletons */}
+                                    {catalogLoading && [...Array(6)].map((_, i) => (
+                                        <div key={i} className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl animate-pulse" style={{ animationDelay: `${i * 50}ms` }}>
+                                            <div className="h-4 w-4 rounded bg-muted/60 shrink-0" />
+                                            <div className="h-3.5 rounded-full bg-muted/60 flex-1" style={{ width: `${55 + (i % 3) * 20}%` }} />
+                                        </div>
+                                    ))}
+
+                                    {/* Real categories */}
+                                    {!catalogLoading && treatments.map(t => (
+                                        <button
                                             key={t.treatment_type_id}
-                                            variant={formData.parentId === t.treatment_type_id.toString() ? "secondary" : "ghost"}
-                                            size="sm"
-                                            className={cn(
-                                                "w-full justify-start text-sm",
-                                                formData.parentId === t.treatment_type_id.toString() && "bg-white dark:bg-slate-800 shadow-sm text-primary font-medium"
-                                            )}
                                             onClick={() => setFormData({ ...formData, parentId: t.treatment_type_id.toString() })}
+                                            className={cn(
+                                                "w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm transition-all text-left",
+                                                formData.parentId === t.treatment_type_id.toString()
+                                                    ? "bg-background text-foreground font-semibold shadow-sm border border-border/60"
+                                                    : "text-muted-foreground hover:text-foreground hover:bg-background/60 font-medium"
+                                            )}
                                         >
-                                            <div className="truncate text-left">{t.treatment_name}</div>
-                                        </Button>
+                                            <span className={cn(
+                                                "h-1.5 w-1.5 rounded-full shrink-0 transition-colors",
+                                                formData.parentId === t.treatment_type_id.toString() ? "bg-blue-500" : "bg-muted-foreground/30"
+                                            )} />
+                                            <span className="truncate">{t.treatment_name}</span>
+                                        </button>
                                     ))}
                                 </div>
                             </ScrollArea>
                         </div>
 
-                        {/* 2. Services List */}
+                        {/* ── Panel 2: Services List ── */}
                         <div className={cn(
-                            "flex-1 flex flex-col bg-white dark:bg-background transition-all duration-300 absolute inset-0 md:relative z-0",
+                            "flex-1 flex flex-col min-w-0 bg-card transition-all absolute inset-0 md:relative z-0",
                             selectedCatalogItem ? "hidden md:flex" : "flex"
                         )}>
-                            <div className="p-3 bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-sm border-b border-border/40 flex justify-between items-center sticky top-0 z-10">
-                                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                                    Available Services
-                                </div>
-                                <Badge variant="outline" className="text-[10px] h-5 bg-background border-border/60">
-                                    {filteredCatalog.filter(p => !formData.parentId || p.treatment_type_id.toString() === formData.parentId).length} found
-                                </Badge>
+                            {/* List subheader */}
+                            <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-muted/20 shrink-0">
+                                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Available Services</p>
+                                {!catalogLoading && (
+                                    <span className="inline-flex items-center rounded-full bg-muted/60 border border-border/60 px-2.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                                        {filteredCatalog.filter(p => !formData.parentId || p.treatment_type_id.toString() === formData.parentId).length}
+                                    </span>
+                                )}
                             </div>
 
-                            <ScrollArea className="flex-1 scrollbar-thin">
-                                {catalogLoading ? (
-                                    <div className="flex flex-col items-center justify-center p-12 text-muted-foreground opacity-70">
-                                        <Loader2 className="h-8 w-8 animate-spin mb-4 text-primary" />
-                                        <p className="text-sm">Fetching master services...</p>
+                            <ScrollArea className="flex-1 min-h-0">
+                                {/* Loading skeletons */}
+                                {catalogLoading && (
+                                    <div className="divide-y divide-border/30">
+                                        {[...Array(7)].map((_, i) => (
+                                            <div
+                                                key={i}
+                                                className="flex items-center gap-4 px-4 py-4 animate-pulse"
+                                                style={{ animationDelay: `${i * 45}ms` }}
+                                            >
+                                                <div className="flex-1 space-y-2 min-w-0">
+                                                    <div className="h-4 w-44 rounded-full bg-muted/60" />
+                                                    <div className="flex gap-2">
+                                                        <div className="h-3 w-14 rounded bg-muted/50" />
+                                                        <div className="h-3 w-16 rounded-full bg-muted/40" />
+                                                    </div>
+                                                </div>
+                                                <div className="h-8 w-8 rounded-full bg-muted/50 shrink-0" />
+                                            </div>
+                                        ))}
                                     </div>
-                                ) : (
+                                )}
+
+                                {/* Empty state */}
+                                {!catalogLoading && filteredCatalog.filter(p => !formData.parentId || p.treatment_type_id.toString() === formData.parentId).length === 0 && (
+                                    <div className="flex flex-col items-center justify-center py-20 text-center px-4">
+                                        <div className="h-14 w-14 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900 flex items-center justify-center mb-3">
+                                            <Search className="h-6 w-6 text-blue-400" />
+                                        </div>
+                                        <p className="text-sm font-semibold text-foreground/70">No services found</p>
+                                        <p className="text-xs text-muted-foreground mt-1">Try a different category or search term</p>
+                                    </div>
+                                )}
+
+                                {/* Service rows */}
+                                {!catalogLoading && (
                                     <div className="divide-y divide-border/30">
                                         {filteredCatalog
                                             .filter(p => !formData.parentId || p.treatment_type_id.toString() === formData.parentId)
-                                            .map(item => (
-                                                <div
-                                                    key={item.procedure_id}
-                                                    className={cn(
-                                                        "p-4 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-900/60 transition-all duration-200 flex items-start justify-between group border-l-2 border-transparent",
-                                                        selectedCatalogItem?.procedure_id === item.procedure_id
-                                                            ? "bg-primary/5 hover:bg-primary/5 border-primary pl-[14px]"
-                                                            : "pl-4"
-                                                    )}
-                                                    onClick={() => {
-                                                        setSelectedCatalogItem(item);
-                                                        setFormData(prev => ({ ...prev, price: 0 }));
-                                                    }}
-                                                >
-                                                    <div className="flex-1 min-w-0 mr-3">
-                                                        <div className="font-medium text-sm text-foreground/90 group-hover:text-primary transition-colors">{item.procedure_name}</div>
-                                                        <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-2 items-center">
-                                                            <span className="font-mono bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded text-[10px]">{item.procedure_code}</span>
-                                                            {item.is_surgical && (
-                                                                <span className="inline-flex items-center text-[10px] text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/30 px-1.5 py-0.5 rounded border border-orange-100 dark:border-orange-900/30">
-                                                                    Surgical
+                                            .map((item, i) => {
+                                                const isSelected = selectedCatalogItem?.procedure_id === item.procedure_id;
+                                                return (
+                                                    <motion.div
+                                                        key={item.procedure_id}
+                                                        initial={{ opacity: 0 }}
+                                                        animate={{ opacity: 1 }}
+                                                        transition={{ delay: i * 0.02 }}
+                                                        onClick={() => { setSelectedCatalogItem(item); setFormData(prev => ({ ...prev, price: 0 })); }}
+                                                        className={cn(
+                                                            "group flex items-center justify-between px-4 py-3.5 cursor-pointer transition-all duration-150",
+                                                            isSelected
+                                                                ? "bg-blue-50/60 dark:bg-blue-950/20 border-l-2 border-blue-500 pl-[14px]"
+                                                                : "hover:bg-muted/30 border-l-2 border-transparent"
+                                                        )}
+                                                    >
+                                                        <div className="flex-1 min-w-0 mr-3">
+                                                            <p className={cn("text-sm font-semibold truncate transition-colors", isSelected ? "text-blue-700 dark:text-blue-400" : "text-foreground/90 group-hover:text-foreground")}>
+                                                                {item.procedure_name}
+                                                            </p>
+                                                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                                                <span className="inline-block bg-muted/60 border border-border/60 px-1.5 py-0.5 rounded text-[10px] font-semibold text-muted-foreground catalog-mono">
+                                                                    {item.procedure_code}
                                                                 </span>
-                                                            )}
+                                                                {item.is_surgical && (
+                                                                    <span className="inline-flex items-center text-[10px] font-semibold text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 px-1.5 py-0.5 rounded border border-amber-100 dark:border-amber-900/30">
+                                                                        Surgical
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                    <div className="h-8 w-8 rounded-full border border-border/40 flex items-center justify-center text-muted-foreground/30 group-hover:border-primary/30 group-hover:text-primary transition-all">
-                                                        <Plus className="h-4 w-4" />
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        {filteredCatalog.filter(p => !formData.parentId || p.treatment_type_id.toString() === formData.parentId).length === 0 && (
-                                            <div className="flex flex-col items-center justify-center py-20 text-center px-4">
-                                                <div className="h-12 w-12 rounded-full bg-slate-50 dark:bg-slate-900 flex items-center justify-center mb-3">
-                                                    <Search className="h-6 w-6 text-muted-foreground/30" />
-                                                </div>
-                                                <p className="text-sm text-muted-foreground">No matching services found</p>
-                                            </div>
-                                        )}
+                                                        <div className={cn(
+                                                            "h-7 w-7 rounded-full border flex items-center justify-center transition-all shrink-0",
+                                                            isSelected
+                                                                ? "border-blue-300 bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400"
+                                                                : "border-border/50 text-muted-foreground/30 group-hover:border-blue-300 group-hover:text-blue-500"
+                                                        )}>
+                                                            <ChevronRight className="h-3.5 w-3.5" />
+                                                        </div>
+                                                    </motion.div>
+                                                );
+                                            })}
                                     </div>
                                 )}
                             </ScrollArea>
                         </div>
 
-                        {/* 3. Config Panel (Right Desktop / Overlay Mobile) */}
+                        {/* ── Panel 3: Config / Price Panel ── */}
                         <div className={cn(
-                            "w-full md:w-[320px] bg-slate-50/50 dark:bg-slate-900/50 flex flex-col shrink-0 transition-all border-l border-border/40 absolute inset-0 md:relative z-20 md:z-0 bg-background md:bg-transparent",
-                            selectedCatalogItem ? "flex animate-in slide-in-from-right-10 md:slide-in-from-right-0 fade-in duration-300" : "hidden md:flex"
+                            "w-full md:w-[300px] shrink-0 border-l border-border/50 flex flex-col bg-muted/10 absolute inset-0 md:relative z-20 md:z-0",
+                            selectedCatalogItem ? "flex animate-in slide-in-from-right-8 fade-in duration-250" : "hidden md:flex"
                         )}>
                             {selectedCatalogItem ? (
-                                <div className="flex flex-col h-full w-full">
-                                    {/* Mobile Back Button */}
-                                    <div className="md:hidden p-4 border-b border-border/40 flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground cursor-pointer" onClick={() => setSelectedCatalogItem(null)}>
-                                        <div className="h-8 w-8 rounded-full bg-background border border-border flex items-center justify-center shadow-sm">
-                                            <X className="h-4 w-4" />
+                                <div className="flex flex-col h-full">
+                                    {/* Mobile back */}
+                                    <button
+                                        className="md:hidden flex items-center gap-2 px-4 py-3.5 border-b border-border/50 text-sm font-medium text-muted-foreground hover:text-foreground bg-background/80 transition-colors"
+                                        onClick={() => setSelectedCatalogItem(null)}
+                                    >
+                                        <div className="h-7 w-7 rounded-full border border-border/60 flex items-center justify-center">
+                                            <X className="h-3.5 w-3.5" />
                                         </div>
                                         Back to list
-                                    </div>
+                                    </button>
 
-                                    <div className="flex-1 overflow-y-auto">
-                                        <div className="p-6 md:p-8 pb-20 md:pb-6">
-                                            <div className="mb-6">
-                                                <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary mb-4 shadow-sm">
-                                                    <Stethoscope className="h-6 w-6" />
-                                                </div>
-                                                <h4 className="font-bold text-lg leading-snug">{selectedCatalogItem.procedure_name}</h4>
-                                                <div className="flex items-center gap-2 mt-2">
-                                                    <Badge variant="outline" className="font-mono text-xs">{selectedCatalogItem.procedure_code}</Badge>
-                                                    {selectedCatalogItem.is_surgical && <Badge variant="secondary" className="text-xs bg-orange-100 text-orange-700 hover:bg-orange-100 border-orange-200">Surgical</Badge>}
-                                                </div>
+                                    <div className="flex-1 overflow-y-auto p-5 pb-4 space-y-5">
+                                        {/* Service info */}
+                                        <div>
+                                            <div className="h-11 w-11 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-100 dark:border-blue-900 text-blue-600 dark:text-blue-400 flex items-center justify-center mb-3">
+                                                <Stethoscope className="h-5 w-5" />
                                             </div>
-
-                                            <div className="space-y-6 bg-white dark:bg-slate-900 rounded-xl border border-border/50 p-5 shadow-sm">
-                                                <div className="space-y-3">
-                                                    <Label className="text-sm font-medium">Standard Rate (₹)</Label>
-                                                    <div className="relative group/input">
-                                                        <IndianRupee className="absolute left-3 top-3 h-4 w-4 text-muted-foreground group-focus-within/input:text-primary transition-colors" />
-                                                        <Input
-                                                            type="number"
-                                                            placeholder="0.00"
-                                                            min="0"
-                                                            value={formData.price}
-                                                            onChange={(e) => setFormData({ ...formData, price: Number(e.target.value) })}
-                                                            className="text-lg font-mono pl-9 h-11 bg-slate-50 dark:bg-slate-950 border-border/60 focus:ring-primary/20 transition-all"
-                                                            autoFocus
-                                                        />
-                                                    </div>
-                                                    <p className="text-[11px] text-muted-foreground leading-relaxed">
-                                                        Enter the base price for this service in your hospital. You can adjust this later in the main list.
-                                                    </p>
-                                                </div>
-
-                                                <div className="rounded-lg p-3 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-100 dark:border-blue-900/30">
-                                                    <div className="flex gap-2.5">
-                                                        <AlertCircle className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
-                                                        <div className="text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
-                                                            Linked to <strong>{treatments.find(t => t.treatment_type_id === selectedCatalogItem.treatment_type_id)?.treatment_name}</strong>
-                                                        </div>
-                                                    </div>
-                                                </div>
+                                            <h4 className="font-bold text-base leading-snug text-foreground">{selectedCatalogItem.procedure_name}</h4>
+                                            <div className="flex items-center gap-2 mt-2 flex-wrap">
+                                                <span className="inline-block bg-muted/60 border border-border/60 px-2 py-0.5 rounded text-[10px] font-semibold text-muted-foreground catalog-mono">
+                                                    {selectedCatalogItem.procedure_code}
+                                                </span>
+                                                {selectedCatalogItem.is_surgical && (
+                                                    <span className="inline-flex items-center text-[10px] font-semibold text-amber-600 bg-amber-50 dark:bg-amber-950/30 px-2 py-0.5 rounded border border-amber-100 dark:border-amber-900/30">
+                                                        Surgical
+                                                    </span>
+                                                )}
                                             </div>
+                                        </div>
+
+                                        {/* Price field */}
+                                        <div className="rounded-xl border border-border/50 bg-card p-4 space-y-3">
+                                            <label className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+                                                Standard Rate (₹)
+                                            </label>
+                                            <div className="relative group">
+                                                <IndianRupee className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground/50 group-focus-within:text-blue-500 transition-colors pointer-events-none" />
+                                                <input
+                                                    type="number"
+                                                    placeholder="0.00"
+                                                    min="0"
+                                                    value={formData.price}
+                                                    onChange={e => setFormData({ ...formData, price: Number(e.target.value) })}
+                                                    autoFocus
+                                                    className="w-full h-11 pl-9 pr-4 rounded-xl border border-input bg-background text-lg font-bold catalog-mono
+                                                   focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
+                                                   hover:border-blue-300 transition-all"
+                                                />
+                                            </div>
+                                            <p className="text-[11px] text-muted-foreground leading-relaxed">
+                                                Base price for this service. Adjustable later from the main list.
+                                            </p>
+                                        </div>
+
+                                        {/* Category info pill */}
+                                        <div className="rounded-xl border border-blue-100 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/20 px-4 py-3 flex items-start gap-2.5">
+                                            <AlertCircle className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                                            <p className="text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
+                                                Linked to <span className="font-bold">{treatments.find(t => t.treatment_type_id === selectedCatalogItem.treatment_type_id)?.treatment_name}</span>
+                                            </p>
                                         </div>
                                     </div>
 
-                                    <div className="p-6 border-t border-border/40 bg-white dark:bg-slate-900 md:bg-transparent mt-auto">
-                                        <Button
-                                            className="w-full h-12 text-base text-white font-medium shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                                    {/* Add button */}
+                                    <div className="px-5 py-4 border-t border-border/50 bg-background/60 backdrop-blur-sm shrink-0">
+                                        <button
                                             onClick={() => handleLinkService(selectedCatalogItem)}
                                             disabled={isSubmitting}
+                                            className="w-full h-10 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-sm font-semibold
+                                           shadow-[0_2px_12px_rgba(37,99,235,0.3)] hover:shadow-[0_4px_16px_rgba(37,99,235,0.4)]
+                                           flex items-center justify-center gap-2 transition-all"
                                         >
-                                            {isSubmitting ? (
-                                                <>
-                                                    <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Adding...
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <Plus className="h-5 w-5 mr-2" /> Add Service to Catalog
-                                                </>
-                                            )}
-                                        </Button>
+                                            {isSubmitting
+                                                ? <><Loader2 className="h-4 w-4 animate-spin" />Adding...</>
+                                                : <><Plus className="h-4 w-4" />Add to Hospital</>
+                                            }
+                                        </button>
                                     </div>
                                 </div>
                             ) : (
-                                <div className="h-full flex flex-col items-center justify-center text-center text-muted-foreground p-6 opacity-60">
-                                    <div className="h-20 w-20 rounded-full bg-slate-100 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 flex items-center justify-center mb-4">
-                                        <LinkIcon className="h-8 w-8 opacity-20" />
+                                /* Empty config panel placeholder */
+                                <div className="flex flex-col items-center justify-center h-full text-center px-6 opacity-50">
+                                    <div className="h-16 w-16 rounded-2xl border-2 border-dashed border-border/60 bg-muted/30 flex items-center justify-center mb-3">
+                                        <ChevronRight className="h-7 w-7 text-muted-foreground/30" />
                                     </div>
-                                    <h5 className="font-medium text-foreground mb-1">Select a Service</h5>
-                                    <p className="text-sm max-w-[200px]">Choose a service from the list to configure pricing.</p>
+                                    <p className="text-sm font-semibold text-foreground/70">Select a Service</p>
+                                    <p className="text-xs text-muted-foreground mt-1 max-w-[180px]">Choose a service from the list to configure its pricing.</p>
                                 </div>
                             )}
                         </div>

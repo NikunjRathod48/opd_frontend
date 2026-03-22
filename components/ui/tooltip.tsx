@@ -9,124 +9,142 @@ interface TooltipProps {
     content: string;
     children: React.ReactNode;
     side?: "top" | "bottom" | "left" | "right";
-    className?: string; // Class for the trigger wrapper
+    className?: string;
     delayDuration?: number;
 }
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const GAP = 10; // px between trigger edge and tooltip
+
+// ─── Spring config — snappy but not harsh ────────────────────────────────────
+
+const SPRING = { type: "spring" as const, stiffness: 420, damping: 28, mass: 0.6 };
+
+// ─── Per-side animation variants ─────────────────────────────────────────────
+
+function getVariants(side: TooltipProps["side"]) {
+    const OFFSET = 6;
+    switch (side) {
+        case "top":    return {
+            initial: { opacity: 0, scale: 0.88, x: "-50%", y:  OFFSET },
+            animate: { opacity: 1, scale: 1,    x: "-50%", y: "-100%" },
+            exit:    { opacity: 0, scale: 0.88, x: "-50%", y:  OFFSET },
+        };
+        case "bottom": return {
+            initial: { opacity: 0, scale: 0.88, x: "-50%", y: -OFFSET },
+            animate: { opacity: 1, scale: 1,    x: "-50%", y:       0 },
+            exit:    { opacity: 0, scale: 0.88, x: "-50%", y: -OFFSET },
+        };
+        case "left":   return {
+            initial: { opacity: 0, scale: 0.88, x:  OFFSET, y: "-50%" },
+            animate: { opacity: 1, scale: 1,    x: "-100%", y: "-50%" },
+            exit:    { opacity: 0, scale: 0.88, x:  OFFSET, y: "-50%" },
+        };
+        case "right":  return {
+            initial: { opacity: 0, scale: 0.88, x: -OFFSET, y: "-50%" },
+            animate: { opacity: 1, scale: 1,    x:       0, y: "-50%" },
+            exit:    { opacity: 0, scale: 0.88, x: -OFFSET, y: "-50%" },
+        };
+    }
+}
+
+// ─── Arrow ────────────────────────────────────────────────────────────────────
+
+function TooltipArrow({ side }: { side: TooltipProps["side"] }) {
+    /**
+     * We render a tiny SVG triangle — cleaner than a rotated square because it
+     * never bleeds outside the tooltip box or creates odd clipping artefacts at
+     * sub-pixel sizes.
+     */
+    const size = 7; // half-base of the triangle
+
+    const paths: Record<NonNullable<TooltipProps["side"]>, React.CSSProperties & { path: string }> = {
+        top:    { path: `M0,0 L${size},0 L${size / 2},${size * 0.75}Z`, bottom: -size * 0.75 + 0.5, left: "50%", transform: "translateX(-50%)",   top:    "auto" },
+        bottom: { path: `M0,${size * 0.75} L${size},${size * 0.75} L${size / 2},0Z`, top: -size * 0.75 + 0.5, left: "50%", transform: "translateX(-50%)", bottom: "auto" },
+        left:   { path: `M0,0 L${size * 0.75},${size / 2} L0,${size}Z`, right: -size * 0.75 + 0.5, top: "50%", transform: "translateY(-50%)", left: "auto" },
+        right:  { path: `M${size * 0.75},0 L0,${size / 2} L${size * 0.75},${size}Z`, left: -size * 0.75 + 0.5, top: "50%", transform: "translateY(-50%)", right: "auto" },
+    };
+
+    const config = paths[side ?? "top"];
+    const { path, ...style } = config;
+
+    const svgSize = side === "top" || side === "bottom"
+        ? { width: size, height: size * 0.75 }
+        : { width: size * 0.75, height: size };
+
+    return (
+        <svg
+            {...svgSize}
+            viewBox={`0 0 ${svgSize.width} ${svgSize.height}`}
+            style={{ position: "absolute", ...style } as React.CSSProperties}
+            className="fill-[#18181b] dark:fill-[#fafafa] pointer-events-none"
+            aria-hidden
+        >
+            <path d={path} />
+        </svg>
+    );
+}
+
+// ─── Tooltip ──────────────────────────────────────────────────────────────────
 
 export function Tooltip({
     content,
     children,
     side = "top",
     className,
-    delayDuration = 200
+    delayDuration = 180,
 }: TooltipProps) {
     const [isVisible, setIsVisible] = React.useState(false);
     const [coords, setCoords] = React.useState({ x: 0, y: 0 });
     const triggerRef = React.useRef<HTMLDivElement>(null);
-    const timerRef = React.useRef<NodeJS.Timeout | null>(null);
-    const [mounted, setMounted] = React.useState(false);
+    const timerRef   = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [mounted,  setMounted]  = React.useState(false);
 
-    React.useEffect(() => {
-        setMounted(true);
-    }, []);
+    React.useEffect(() => { setMounted(true); }, []);
 
     const updatePosition = React.useCallback(() => {
         if (!triggerRef.current) return;
-
-        const rect = triggerRef.current.getBoundingClientRect();
-        const scrollX = 0; // Fixed position relative to viewport, no scroll needed
-        const scrollY = 0;
-
-        let x = 0;
-        let y = 0;
-        const gap = 10; // Distance from trigger to tooltip box
+        const r = triggerRef.current.getBoundingClientRect();
+        let x = 0, y = 0;
 
         switch (side) {
-            case "top":
-                x = rect.left + rect.width / 2;
-                y = rect.top - gap;
-                break;
-            case "bottom":
-                x = rect.left + rect.width / 2;
-                y = rect.bottom + gap;
-                break;
-            case "left":
-                x = rect.left - gap;
-                y = rect.top + rect.height / 2;
-                break;
-            case "right":
-                x = rect.right + gap;
-                y = rect.top + rect.height / 2;
-                break;
+            case "top":    x = r.left + r.width  / 2; y = r.top    - GAP; break;
+            case "bottom": x = r.left + r.width  / 2; y = r.bottom + GAP; break;
+            case "left":   x = r.left - GAP;          y = r.top    + r.height / 2; break;
+            case "right":  x = r.right + GAP;         y = r.top    + r.height / 2; break;
         }
-
         setCoords({ x, y });
     }, [side]);
 
-    const handleMouseEnter = () => {
-        // Disable tooltip on mobile (screens < 768px)
-        if (typeof window !== 'undefined' && window.innerWidth < 768) return;
-
+    const handleMouseEnter = React.useCallback(() => {
+        if (typeof window !== "undefined" && window.innerWidth < 768) return;
         if (timerRef.current) clearTimeout(timerRef.current);
-
-        // Calculate position immediately on enter so it's ready
         updatePosition();
+        timerRef.current = setTimeout(() => setIsVisible(true), delayDuration);
+    }, [delayDuration, updatePosition]);
 
-        timerRef.current = setTimeout(() => {
-            setIsVisible(true);
-        }, delayDuration);
-    };
-
-    const handleMouseLeave = () => {
+    const handleMouseLeave = React.useCallback(() => {
         if (timerRef.current) clearTimeout(timerRef.current);
         setIsVisible(false);
-    };
+    }, []);
 
-    const handleMouseDown = () => {
-        setIsVisible(false);
-    }
+    const handleMouseDown = React.useCallback(() => setIsVisible(false), []);
 
-    // Update position on scroll or resize while visible
+    // Re-position on scroll / resize while open
     React.useEffect(() => {
-        if (isVisible) {
-            window.addEventListener("scroll", updatePosition, true);
-            window.addEventListener("resize", updatePosition);
-            return () => {
-                window.removeEventListener("scroll", updatePosition, true);
-                window.removeEventListener("resize", updatePosition);
-            };
-        }
+        if (!isVisible) return;
+        window.addEventListener("scroll",  updatePosition, true);
+        window.addEventListener("resize",  updatePosition);
+        return () => {
+            window.removeEventListener("scroll",  updatePosition, true);
+            window.removeEventListener("resize",  updatePosition);
+        };
     }, [isVisible, updatePosition]);
 
-    // Animation variants
-    const getVariants = () => {
-        switch (side) {
-            case 'top': return {
-                initial: { opacity: 0, scale: 0.9, x: "-50%", y: 5 },
-                animate: { opacity: 1, scale: 1, x: "-50%", y: "-100%" },
-                exit: { opacity: 0, scale: 0.9, x: "-50%", y: 5 }
-            };
-            case 'bottom': return {
-                initial: { opacity: 0, scale: 0.9, x: "-50%", y: -5 },
-                animate: { opacity: 1, scale: 1, x: "-50%", y: 0 },
-                exit: { opacity: 0, scale: 0.9, x: "-50%", y: -5 }
-            };
-            case 'left': return {
-                initial: { opacity: 0, scale: 0.9, x: 5, y: "-50%" },
-                animate: { opacity: 1, scale: 1, x: "-100%", y: "-50%" },
-                exit: { opacity: 0, scale: 0.9, x: 5, y: "-50%" }
-            };
-            case 'right': return {
-                initial: { opacity: 0, scale: 0.9, x: -5, y: "-50%" },
-                animate: { opacity: 1, scale: 1, x: 0, y: "-50%" },
-                exit: { opacity: 0, scale: 0.9, x: -5, y: "-50%" }
-            };
-        }
-    };
-
-    const variant = getVariants();
-
     if (!mounted) return <div className={className}>{children}</div>;
+
+    const variants = getVariants(side);
 
     return (
         <>
@@ -139,64 +157,40 @@ export function Tooltip({
             >
                 {children}
             </div>
+
             {createPortal(
                 <AnimatePresence>
                     {isVisible && (
                         <motion.div
-                            initial={variant?.initial}
-                            animate={variant?.animate}
-                            exit={variant?.exit}
-                            transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                            role="tooltip"
+                            initial={variants?.initial}
+                            animate={variants?.animate}
+                            exit={variants?.exit}
+                            transition={SPRING}
+                            style={{ left: coords.x, top: coords.y }}
                             className={cn(
-                                "fixed z-[9999] px-3 py-1.5 text-xs font-semibold text-white bg-primary rounded-md shadow-lg pointer-events-none whitespace-nowrap"
+                                // Layout
+                                "fixed z-[9999] pointer-events-none",
+                                // Box
+                                "px-2.5 py-1.5 rounded-lg",
+                                // Typography — tiny, sharp, legible
+                                "text-[11.5px] font-semibold leading-snug tracking-wide whitespace-nowrap",
+                                // Light mode: near-black surface
+                                "bg-zinc-900 text-zinc-50",
+                                // Dark mode: near-white surface, dark text — inverted
+                                "dark:bg-zinc-50 dark:text-zinc-900",
+                                // Shadow — layered for depth
+                                "shadow-[0_2px_6px_rgba(0,0,0,0.18),0_1px_2px_rgba(0,0,0,0.12)]",
+                                "dark:shadow-[0_2px_8px_rgba(0,0,0,0.35),0_1px_3px_rgba(0,0,0,0.25)]",
                             )}
-                            style={{
-                                left: coords.x,
-                                top: coords.y,
-                            }}
                         >
                             {content}
-                            <Arrow side={side} />
+                            <TooltipArrow side={side} />
                         </motion.div>
                     )}
                 </AnimatePresence>,
                 document.body
             )}
         </>
-    );
-}
-
-function Arrow({ side }: { side: string }) {
-    // Arrow logic:
-    // The arrow is a small square rotated 45 degrees.
-    // It should be positioned on the edge of the tooltip closer to the trigger.
-
-    // NOTE: The tooltip container is ALREADY transformed (e.g. translateY(-100%)).
-    // So "bottom" of the relative container is actually the visual bottom.
-
-    const baseClass = "absolute w-2 h-2 bg-primary rotate-45";
-
-    let positionClass = "";
-    switch (side) {
-        case 'top':
-            // Tooltip is moved up by 100%. So the arrow needs to be at the bottom of the content box.
-            positionClass = "bottom-[-4px] left-1/2 -translate-x-1/2";
-            break;
-        case 'bottom':
-            // Tooltip is just moved -50% X. Top is at 0. Arrow at top.
-            positionClass = "top-[-4px] left-1/2 -translate-x-1/2";
-            break;
-        case 'left':
-            // Tooltip moved -100% X, -50% Y. Arrow at right.
-            positionClass = "right-[-4px] top-1/2 -translate-y-1/2";
-            break;
-        case 'right':
-            // Tooltip moved -50% Y. Arrow at left.
-            positionClass = "left-[-4px] top-1/2 -translate-y-1/2";
-            break;
-    }
-
-    return (
-        <div className={cn(baseClass, positionClass)} />
     );
 }

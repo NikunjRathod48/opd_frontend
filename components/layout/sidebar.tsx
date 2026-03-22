@@ -121,6 +121,13 @@ const SIDEBAR_ITEMS: MenuItem[] = [
         label: "Locations",
         allowedRoles: ["SuperAdmin"]
     },
+    {
+        key: "specializations",
+        path: "master-data/specializations",
+        icon: Stethoscope,
+        label: "Specializations",
+        allowedRoles: ["SuperAdmin"]
+    },
 
     // --- Group Admin Menu ---
     {

@@ -72,7 +72,7 @@ export default function UnauthorizedPage() {
                     <Button
                         variant="ghost"
                         size="lg"
-                        onClick={() => router.back()}
+                        onClick={() => window.history.go(-2)}
                         className="h-12 px-8 border border-slate-200 text-slate-600 hover:bg-red-600 hover:text-white hover:border-red-600 transition-all duration-300 font-medium rounded-full"
                     >
                         <ArrowLeft className="mr-2 h-4 w-4" />

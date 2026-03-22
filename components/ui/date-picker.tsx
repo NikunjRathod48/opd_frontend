@@ -15,6 +15,30 @@ interface DatePickerProps {
     maxDate?: string; // YYYY-MM-DD
 }
 
+// Formatting display helper
+const formatDateDisplay = (dateStr?: string) => {
+    if (!dateStr) return "";
+    const date = new Date(dateStr);
+    const [y, m, d] = dateStr.split('-');
+    if (!y || !m || !d) return dateStr;
+    return `${d}/${m}/${y}`;
+};
+
+const parseTypedDate = (val: string) => {
+    // expected DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+    const match = val.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+    if (match) {
+        const d = parseInt(match[1], 10);
+        const m = parseInt(match[2], 10) - 1;
+        const y = parseInt(match[3], 10);
+        const date = new Date(y, m, d);
+        if (date.getFullYear() === y && date.getMonth() === m && date.getDate() === d) {
+            return date;
+        }
+    }
+    return null;
+};
+
 export function DatePicker({
     value,
     onChange,
@@ -28,18 +52,28 @@ export function DatePicker({
     const [view, setView] = React.useState<"days" | "months" | "years">("days");
     const containerRef = React.useRef<HTMLDivElement>(null);
 
-    // Initial view state based on value or today
+    const [inputValue, setInputValue] = React.useState(() => {
+        return value ? formatDateDisplay(value) : "";
+    });
+
     const [viewDate, setViewDate] = React.useState(() => {
         if (value) return new Date(value);
         return new Date();
     });
 
-    // Reset view when closing
+    React.useEffect(() => {
+        if (value) {
+            setInputValue(formatDateDisplay(value));
+            setViewDate(new Date(value));
+        } else {
+            setInputValue("");
+        }
+    }, [value]);
+
     React.useEffect(() => {
         if (!isOpen) {
             setView("days");
         } else {
-            // Auto-scroll to center when opening
             setTimeout(() => {
                 containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }, 100);
@@ -69,6 +103,45 @@ export function DatePicker({
         if (view === "years") setViewDate(new Date(viewDate.getFullYear() + 12, viewDate.getMonth(), 1));
     };
 
+    const applyTypedDate = () => {
+        if (!inputValue.trim()) {
+            onChange("");
+            return;
+        }
+        const date = parseTypedDate(inputValue.trim());
+        if (date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, "0");
+            const d = String(date.getDate()).padStart(2, "0");
+            const dateStr = `${year}-${month}-${d}`;
+
+            if (minDate && dateStr < minDate) {
+                setInputValue(value ? formatDateDisplay(value) : ""); return;
+            }
+            if (maxDate && dateStr > maxDate) {
+                setInputValue(value ? formatDateDisplay(value) : ""); return;
+            }
+
+            setViewDate(date);
+            onChange(dateStr);
+            setInputValue(formatDateDisplay(dateStr));
+        } else {
+            setInputValue(value ? formatDateDisplay(value) : "");
+        }
+    };
+
+    const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            applyTypedDate();
+            setIsOpen(false);
+        }
+    };
+
+    const handleInputBlur = () => {
+        applyTypedDate();
+    };
+
     const handleSelectDate = (day: number) => {
         const date = new Date(viewDate.getFullYear(), viewDate.getMonth(), day);
         const year = date.getFullYear();
@@ -93,11 +166,12 @@ export function DatePicker({
         const handleClickOutside = (event: MouseEvent) => {
             if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
                 setIsOpen(false);
+                applyTypedDate(); // Validate and format on click-away
             }
         };
         if (isOpen) document.addEventListener("mousedown", handleClickOutside);
         return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, [isOpen]);
+    }, [isOpen, inputValue, value]);
 
     // Data Generation
     const totalDays = daysInMonth(viewDate);
@@ -107,15 +181,6 @@ export function DatePicker({
         const dayNumber = i - startDay + 1;
         return (dayNumber > 0 && dayNumber <= totalDays) ? dayNumber : null;
     });
-
-    // Formatting display
-    const formatDateDisplay = (dateStr: string) => {
-        if (!dateStr) return "";
-        const date = new Date(dateStr);
-        const [y, m, d] = dateStr.split('-');
-        if (!y || !m || !d) return dateStr;
-        return `${d}/${m}/${y}`;
-    };
 
     const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     const shortMonthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -127,19 +192,29 @@ export function DatePicker({
 
     return (
         <div className={cn("relative w-full group", className)} ref={containerRef}>
-            {/* Trigger - Match SearchableSelect (rounded-md) */}
-            <button
-                type="button"
-                onClick={() => !disabled && setIsOpen(!isOpen)}
-                disabled={disabled}
+            {/* Trigger Container */}
+            <div
                 className={cn(
-                    "flex items-center w-full h-10 px-3 rounded-md border border-input bg-background text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 transition-all text-left",
-                    !value && "text-muted-foreground"
+                    "flex items-center w-full h-10 px-3 rounded-md border border-input bg-background text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 transition-all",
+                    disabled && "cursor-not-allowed opacity-50"
                 )}
             >
-                <CalendarIcon className="mr-2 h-4 w-4 shrink-0 opacity-50" />
-                {value ? <span className="truncate">{formatDateDisplay(value)}</span> : <span>{placeholder}</span>}
-            </button>
+                <CalendarIcon
+                    className="mr-2 h-4 w-4 shrink-0 opacity-50 cursor-pointer hover:opacity-100 transition-opacity"
+                    onClick={() => !disabled && setIsOpen(!isOpen)}
+                />
+                <input
+                    type="text"
+                    placeholder={placeholder}
+                    value={inputValue}
+                    onChange={(e) => setInputValue(e.target.value)}
+                    onBlur={handleInputBlur}
+                    onKeyDown={handleInputKeyDown}
+                    disabled={disabled}
+                    className="w-full bg-transparent border-none outline-none focus:outline-none focus:ring-0 p-0 text-sm placeholder:text-muted-foreground"
+                    onClick={() => !disabled && setIsOpen(true)}
+                />
+            </div>
 
             {/* Dropdown - match SearchableSelect (rounded-md container) */}
             {isOpen && (

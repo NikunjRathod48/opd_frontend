@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AnimatePresence, motion } from "framer-motion";
+import { Skeleton } from "@/components/ui/skeleton";
 
 // --- Types ---
 // Generic constraint for Category
@@ -181,7 +182,17 @@ export function ClinicalMasterLayout<TCat extends BaseCategory, TItem extends Ba
                     </CardHeader>
                     <ScrollArea className="flex-1 p-2">
                         {isLoading ? (
-                            <div className="flex justify-center py-10"><Loader2 className="animate-spin text-blue-600" /></div>
+                            <div className="space-y-2">
+                                {[1, 2, 3, 4, 5, 6, 7].map(i => (
+                                    <div key={i} className="flex items-center justify-between p-3 rounded-xl border border-transparent bg-muted/20">
+                                        <div className="flex-1 min-w-0 pr-3 space-y-2">
+                                            <Skeleton className="h-4 w-3/4" />
+                                            <Skeleton className="h-3 w-1/2" />
+                                        </div>
+                                        <Skeleton className="h-5 w-8 rounded-full shrink-0" />
+                                    </div>
+                                ))}
+                            </div>
                         ) : (
                             <div className="space-y-2">
                                 {filteredCategories.map(cat => {
@@ -235,7 +246,45 @@ export function ClinicalMasterLayout<TCat extends BaseCategory, TItem extends Ba
                     "flex flex-col flex-1 border-border/50 shadow-lg bg-white/50 dark:bg-slate-900/50 backdrop-blur-xl h-full absolute inset-0 md:relative md:inset-auto z-20 transition-transform duration-300",
                     isMobileItemView ? "translate-x-0" : "translate-x-full md:translate-x-0"
                 )}>
-                    {selectedCategory ? (
+                    {isLoading ? (
+                        <div className="flex flex-col h-full p-4 md:p-6">
+                            <div className="border-b border-border/50 pb-4 mb-4 flex items-center justify-between">
+                                <div className="flex items-center gap-4 w-full">
+                                    <Skeleton className="h-7 w-48" />
+                                    <Skeleton className="h-5 w-24 rounded-md" />
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Skeleton className="h-9 w-28 rounded-lg hidden md:block" />
+                                </div>
+                            </div>
+                            <div className="mb-4">
+                                <Skeleton className="h-10 w-full md:w-1/2 rounded-xl" />
+                            </div>
+                            <ScrollArea className="flex-1">
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {[1, 2, 3, 4, 5, 6, 7, 8].map(i => (
+                                        <div key={i} className="bg-white/50 dark:bg-slate-800/10 border border-border/60 rounded-xl p-4 flex flex-col h-[150px] shadow-sm">
+                                            <div className="flex justify-between items-start mb-3">
+                                                <Skeleton className="h-6 w-16 rounded-md" />
+                                                <Skeleton className="h-4 w-12 rounded-sm" />
+                                            </div>
+                                            <Skeleton className="h-4 w-4/5 mb-3" />
+                                            <div className="flex gap-2">
+                                                <Skeleton className="h-3 w-16 rounded-sm" />
+                                            </div>
+                                            <div className="mt-auto pt-3 border-t border-dashed border-border/50 flex justify-between items-end">
+                                                <div className="flex flex-col gap-1">
+                                                    <Skeleton className="h-2 w-12" />
+                                                    <Skeleton className="h-4 w-16" />
+                                                </div>
+                                                <Skeleton className="h-4 w-12" />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </ScrollArea>
+                        </div>
+                    ) : selectedCategory ? (
                         <>
                             <CardHeader className="border-b border-border/50 p-4 shrink-0">
                                 <div className="flex items-center justify-between gap-4">

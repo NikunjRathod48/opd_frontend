@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Search, Plus, Map, MapPin, Pencil, Trash2, CheckCircle2, MoreVertical, X, Building2, ArrowLeft } from "lucide-react";
+import { Search, Plus, Map, MapPin, Pencil, Trash2, CheckCircle2, MoreVertical, X, Building2, ArrowLeft, Loader2 } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -55,6 +56,7 @@ export function StateCityManager() {
     // Form Data
     const [formData, setFormData] = useState({ id: 0, name: "", code: "" });
     const [isEditing, setIsEditing] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Delete/Toggle
     const [deleteState, setDeleteState] = useState<{ open: boolean; type: 'State' | 'City'; id: number; name: string }>({
@@ -141,6 +143,7 @@ export function StateCityManager() {
     };
 
     const handleStateSubmit = async () => {
+        setIsSubmitting(true);
         try {
             if (isEditing) {
                 await api.put(`/master-data/states/${formData.id}`, {
@@ -160,6 +163,8 @@ export function StateCityManager() {
             fetchData();
         } catch (e) {
             addToast("Failed to save state", "error");
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -179,6 +184,7 @@ export function StateCityManager() {
 
     const handleCitySubmit = async () => {
         if (!selectedState) return;
+        setIsSubmitting(true);
         try {
             if (isEditing) {
                 await api.put(`/master-data/cities/${formData.id}`, {
@@ -200,6 +206,8 @@ export function StateCityManager() {
             fetchData();
         } catch (e) {
             addToast("Failed to save city", "error");
+        } finally {
+            setIsSubmitting(false);
         }
     };
 
@@ -266,58 +274,70 @@ export function StateCityManager() {
 
                     <ScrollArea className="flex-1">
                         <div className="p-3 space-y-2">
-                            {filteredStates.map(state => (
-                                <div
-                                    key={state.state_id}
-                                    onClick={() => setSelectedState(state)}
-                                    className={cn(
-                                        "group flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all duration-200 border",
-                                        selectedState?.state_id === state.state_id
-                                            ? "bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800"
-                                            : "bg-transparent border-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-border/50"
-                                    )}
-                                >
-                                    <div className={cn(
-                                        "h-10 w-10 rounded-lg flex items-center justify-center shrink-0 transition-colors",
-                                        selectedState?.state_id === state.state_id
-                                            ? "bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400"
-                                            : "bg-slate-100 dark:bg-slate-800 text-slate-500"
-                                    )}>
-                                        <MapPin className="h-5 w-5" />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="flex items-center justify-between">
-                                            <h3 className={cn(
-                                                "font-semibold text-sm truncate",
-                                                selectedState?.state_id === state.state_id ? "text-indigo-950 dark:text-indigo-100" : "text-foreground"
-                                            )}>
-                                                {state.state_name}
-                                            </h3>
-                                            <Badge variant="secondary" className="text-[10px] h-4 px-1">{state.state_code}</Badge>
+                            {isLoading ? (
+                                Array.from({ length: 8 }).map((_, i) => (
+                                    <div key={i} className="flex items-center gap-3 p-3 rounded-xl border border-transparent">
+                                        <Skeleton className="h-10 w-10 rounded-lg shrink-0" />
+                                        <div className="flex-1 space-y-2">
+                                            <Skeleton className="h-4 w-24" />
+                                            <Skeleton className="h-3 w-12" />
                                         </div>
-                                        <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
-                                            {cities.filter(c => c.state_id === state.state_id).length} Cities
-                                            {!state.is_active && <span className="text-red-500 font-medium">Inactive</span>}
-                                        </p>
                                     </div>
-                                    <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                            <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <MoreVertical className="h-3.5 w-3.5" />
-                                            </Button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end">
-                                            <DropdownMenuItem onClick={() => { openEditState(state); }}>
-                                                <Pencil className="h-4 w-4 mr-2" /> Edit State
-                                            </DropdownMenuItem>
-                                            <DropdownMenuItem onClick={() => { setDeleteState({ open: true, type: 'State', id: state.state_id, name: state.state_name }); }}>
-                                                {state.is_active ? <Trash2 className="h-4 w-4 mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                                                {state.is_active ? "Deactivate" : "Activate"}
-                                            </DropdownMenuItem>
-                                        </DropdownMenuContent>
-                                    </DropdownMenu>
-                                </div>
-                            ))}
+                                ))
+                            ) : (
+                                filteredStates.map(state => (
+                                    <div
+                                        key={state.state_id}
+                                        onClick={() => setSelectedState(state)}
+                                        className={cn(
+                                            "group flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all duration-200 border",
+                                            selectedState?.state_id === state.state_id
+                                                ? "bg-indigo-50 dark:bg-indigo-900/20 border-indigo-200 dark:border-indigo-800"
+                                                : "bg-transparent border-transparent hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-border/50"
+                                        )}
+                                    >
+                                        <div className={cn(
+                                            "h-10 w-10 rounded-lg flex items-center justify-center shrink-0 transition-colors",
+                                            selectedState?.state_id === state.state_id
+                                                ? "bg-indigo-100 dark:bg-indigo-900/40 text-indigo-600 dark:text-indigo-400"
+                                                : "bg-slate-100 dark:bg-slate-800 text-slate-500"
+                                        )}>
+                                            <MapPin className="h-5 w-5" />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center justify-between">
+                                                <h3 className={cn(
+                                                    "font-semibold text-sm truncate",
+                                                    selectedState?.state_id === state.state_id ? "text-indigo-950 dark:text-indigo-100" : "text-foreground"
+                                                )}>
+                                                    {state.state_name}
+                                                </h3>
+                                                <Badge variant="secondary" className="text-[10px] h-4 px-1">{state.state_code}</Badge>
+                                            </div>
+                                            <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
+                                                {cities.filter(c => c.state_id === state.state_id).length} Cities
+                                                {!state.is_active && <span className="text-red-500 font-medium">Inactive</span>}
+                                            </p>
+                                        </div>
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <MoreVertical className="h-3.5 w-3.5" />
+                                                </Button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent align="end">
+                                                <DropdownMenuItem onClick={() => { openEditState(state); }}>
+                                                    <Pencil className="h-4 w-4 mr-2" /> Edit State
+                                                </DropdownMenuItem>
+                                                <DropdownMenuItem onClick={() => { setDeleteState({ open: true, type: 'State', id: state.state_id, name: state.state_name }); }}>
+                                                    {state.is_active ? <Trash2 className="h-4 w-4 mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+                                                    {state.is_active ? "Deactivate" : "Activate"}
+                                                </DropdownMenuItem>
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </ScrollArea>
                 </div>
@@ -369,7 +389,23 @@ export function StateCityManager() {
 
                             <div className="flex-1 p-6 overflow-hidden">
                                 <ScrollArea className="h-full">
-                                    {filteredCities.length > 0 ? (
+                                    {isLoading ? (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
+                                            {Array.from({ length: 6 }).map((_, i) => (
+                                                <Card key={i} className="border-border/60 bg-white dark:bg-slate-900 rounded-xl overflow-hidden">
+                                                    <CardContent className="p-4 flex items-center justify-between">
+                                                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                                                            <Skeleton className="h-10 w-10 rounded-full shrink-0" />
+                                                            <div className="min-w-0 flex-1 space-y-2">
+                                                                <Skeleton className="h-4 w-32" />
+                                                                <Skeleton className="h-3 w-16" />
+                                                            </div>
+                                                        </div>
+                                                    </CardContent>
+                                                </Card>
+                                            ))}
+                                        </div>
+                                    ) : filteredCities.length > 0 ? (
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-20">
                                             {filteredCities.map(city => (
                                                 <Card key={city.city_id} className={cn(
@@ -453,7 +489,16 @@ export function StateCityManager() {
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setIsStateModalOpen(false)}>Cancel</Button>
-                        <Button className="text-white" onClick={handleStateSubmit}>{isEditing ? 'Save Changes' : 'Create State'}</Button>
+                        <Button className="text-white" disabled={isSubmitting} onClick={handleStateSubmit}>
+                            {isSubmitting ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    {isEditing ? 'Saving...' : 'Creating...'}
+                                </>
+                            ) : (
+                                isEditing ? 'Save Changes' : 'Create State'
+                            )}
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
@@ -476,7 +521,16 @@ export function StateCityManager() {
                     </div>
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setIsCityModalOpen(false)}>Cancel</Button>
-                        <Button className="text-white" onClick={handleCitySubmit}>{isEditing ? 'Save Changes' : 'Create City'}</Button>
+                        <Button className="text-white" disabled={isSubmitting} onClick={handleCitySubmit}>
+                            {isSubmitting ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    {isEditing ? 'Saving...' : 'Creating...'}
+                                </>
+                            ) : (
+                                isEditing ? 'Save Changes' : 'Create City'
+                            )}
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
