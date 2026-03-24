@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from "lucide-react";
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -15,278 +15,363 @@ interface DatePickerProps {
     maxDate?: string; // YYYY-MM-DD
 }
 
-// Formatting display helper
-const formatDateDisplay = (dateStr?: string) => {
-    if (!dateStr) return "";
-    const date = new Date(dateStr);
-    const [y, m, d] = dateStr.split('-');
-    if (!y || !m || !d) return dateStr;
-    return `${d}/${m}/${y}`;
-};
+const MONTHS = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+];
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const DAYS_OF_WEEK = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
 
-const parseTypedDate = (val: string) => {
-    // expected DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
-    const match = val.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
-    if (match) {
-        const d = parseInt(match[1], 10);
-        const m = parseInt(match[2], 10) - 1;
-        const y = parseInt(match[3], 10);
-        const date = new Date(y, m, d);
-        if (date.getFullYear() === y && date.getMonth() === m && date.getDate() === d) {
-            return date;
-        }
-    }
-    return null;
-};
+function parseYMD(value?: string): { y: string; m: string; d: string } {
+    if (!value) return { y: "", m: "", d: "" };
+    const [y = "", m = "", d = ""] = value.split("-");
+    return { y, m, d };
+}
+
+function buildYMD(y: string, m: string, d: string): string | null {
+    const yi = parseInt(y, 10);
+    const mi = parseInt(m, 10);
+    const di = parseInt(d, 10);
+    if (!yi || yi < 1 || yi > 9999) return null;
+    if (!mi || mi < 1 || mi > 12) return null;
+    const daysInM = new Date(yi, mi, 0).getDate();
+    if (!di || di < 1 || di > daysInM) return null;
+    return `${yi}-${String(mi).padStart(2, "0")}-${String(di).padStart(2, "0")}`;
+}
+
+function daysInMonth(year: number, month: number) {
+    return new Date(year, month + 1, 0).getDate();
+}
+
+function firstDayOfMonth(year: number, month: number) {
+    return new Date(year, month, 1).getDay();
+}
 
 export function DatePicker({
     value,
     onChange,
-    placeholder = "Pick a date",
+    placeholder,
     className,
     disabled = false,
     minDate,
-    maxDate
+    maxDate,
 }: DatePickerProps) {
+    const containerRef = React.useRef<HTMLDivElement>(null);
+    const dayRef = React.useRef<HTMLInputElement>(null);
+    const monRef = React.useRef<HTMLInputElement>(null);
+    const yrRef = React.useRef<HTMLInputElement>(null);
+
     const [isOpen, setIsOpen] = React.useState(false);
     const [view, setView] = React.useState<"days" | "months" | "years">("days");
-    const containerRef = React.useRef<HTMLDivElement>(null);
 
-    const [inputValue, setInputValue] = React.useState(() => {
-        return value ? formatDateDisplay(value) : "";
+    // Three segment state
+    const parsed = parseYMD(value);
+    const [dd, setDd] = React.useState(parsed.d);
+    const [mm, setMm] = React.useState(parsed.m);
+    const [yyyy, setYyyy] = React.useState(parsed.y);
+
+    // Calendar navigation state
+    const [navYear, setNavYear] = React.useState(() => {
+        if (value) return parseInt(value.split("-")[0], 10);
+        return new Date().getFullYear();
+    });
+    const [navMonth, setNavMonth] = React.useState(() => {
+        if (value) return parseInt(value.split("-")[1], 10) - 1;
+        return new Date().getMonth();
     });
 
-    const [viewDate, setViewDate] = React.useState(() => {
-        if (value) return new Date(value);
-        return new Date();
-    });
-
+    // Sync segments when external value changes
     React.useEffect(() => {
-        if (value) {
-            setInputValue(formatDateDisplay(value));
-            setViewDate(new Date(value));
-        } else {
-            setInputValue("");
+        const p = parseYMD(value);
+        setDd(p.d);
+        setMm(p.m);
+        setYyyy(p.y);
+        if (p.y && p.m) {
+            setNavYear(parseInt(p.y, 10));
+            setNavMonth(parseInt(p.m, 10) - 1);
         }
     }, [value]);
 
+    // Click outside to close
     React.useEffect(() => {
-        if (!isOpen) {
-            setView("days");
-        } else {
-            setTimeout(() => {
-                containerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            }, 100);
-        }
+        const handler = (e: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        if (isOpen) document.addEventListener("mousedown", handler);
+        return () => document.removeEventListener("mousedown", handler);
     }, [isOpen]);
 
-    const daysInMonth = (date: Date) => {
-        return new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
-    };
-
-    const firstDayOfMonth = (date: Date) => {
-        return new Date(date.getFullYear(), date.getMonth(), 1).getDay(); // 0 = Sun
-    };
-
-    // Navigation Handlers
-    const handlePrev = (e: React.MouseEvent) => {
-        e.preventDefault(); // Prevent form submission
-        if (view === "days") setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() - 1, 1));
-        if (view === "months") setViewDate(new Date(viewDate.getFullYear() - 1, viewDate.getMonth(), 1));
-        if (view === "years") setViewDate(new Date(viewDate.getFullYear() - 12, viewDate.getMonth(), 1));
-    };
-
-    const handleNext = (e: React.MouseEvent) => {
-        e.preventDefault(); // Prevent form submission
-        if (view === "days") setViewDate(new Date(viewDate.getFullYear(), viewDate.getMonth() + 1, 1));
-        if (view === "months") setViewDate(new Date(viewDate.getFullYear() + 1, viewDate.getMonth(), 1));
-        if (view === "years") setViewDate(new Date(viewDate.getFullYear() + 12, viewDate.getMonth(), 1));
-    };
-
-    const applyTypedDate = () => {
-        if (!inputValue.trim()) {
-            onChange("");
-            return;
-        }
-        const date = parseTypedDate(inputValue.trim());
-        if (date) {
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, "0");
-            const d = String(date.getDate()).padStart(2, "0");
-            const dateStr = `${year}-${month}-${d}`;
-
-            if (minDate && dateStr < minDate) {
-                setInputValue(value ? formatDateDisplay(value) : ""); return;
-            }
-            if (maxDate && dateStr > maxDate) {
-                setInputValue(value ? formatDateDisplay(value) : ""); return;
-            }
-
-            setViewDate(date);
-            onChange(dateStr);
-            setInputValue(formatDateDisplay(dateStr));
-        } else {
-            setInputValue(value ? formatDateDisplay(value) : "");
+    // Every time segments change, try to commit the date
+    const tryCommit = (d: string, m: string, y: string) => {
+        const result = buildYMD(y, m, d);
+        if (result) {
+            if (minDate && result < minDate) return;
+            if (maxDate && result > maxDate) return;
+            onChange(result);
+            // Update calendar nav to reflect the typed date
+            setNavYear(parseInt(y, 10));
+            setNavMonth(parseInt(m, 10) - 1);
         }
     };
 
-    const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === "Enter") {
+    // ── Segment handlers ──────────────────────────────────────────────
+    const handleDayChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const raw = e.target.value.replace(/\D/g, "").slice(0, 2);
+        setDd(raw);
+        if (raw.length === 2 || parseInt(raw, 10) > 3) {
+            monRef.current?.focus();
+            monRef.current?.select();
+        }
+        tryCommit(raw, mm, yyyy);
+    };
+
+    const handleMonthChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const raw = e.target.value.replace(/\D/g, "").slice(0, 2);
+        setMm(raw);
+        if (raw.length === 2 || parseInt(raw, 10) > 1) {
+            yrRef.current?.focus();
+            yrRef.current?.select();
+        }
+        tryCommit(dd, raw, yyyy);
+    };
+
+    const handleYearChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const raw = e.target.value.replace(/\D/g, "").slice(0, 4);
+        setYyyy(raw);
+        // If user typed a complete 4-digit year, jump the calendar
+        if (raw.length === 4) {
+            const y = parseInt(raw, 10);
+            if (y >= 1900 && y <= 2100) {
+                setNavYear(y);
+                setView("days");
+            }
+        }
+        tryCommit(dd, mm, raw);
+    };
+
+    // Arrow key navigation within segments
+    const handleKeyDown = (
+        e: React.KeyboardEvent<HTMLInputElement>,
+        setter: (v: string) => void,
+        current: string,
+        min: number,
+        max: number,
+        prevRef?: React.RefObject<HTMLInputElement | null>,
+        nextRef?: React.RefObject<HTMLInputElement | null>,
+    ) => {
+        if (e.key === "ArrowUp") {
             e.preventDefault();
-            applyTypedDate();
-            setIsOpen(false);
+            const n = Math.min(max, (parseInt(current, 10) || min - 1) + 1);
+            setter(String(n).padStart(2, "0"));
+        } else if (e.key === "ArrowDown") {
+            e.preventDefault();
+            const n = Math.max(min, (parseInt(current, 10) || min + 1) - 1);
+            setter(String(n).padStart(2, "0"));
+        } else if (e.key === "Backspace" && !current) {
+            prevRef?.current?.focus();
+            prevRef?.current?.select();
+        } else if (e.key === "Tab" && !e.shiftKey && nextRef) {
+            // auto-handled
         }
     };
 
-    const handleInputBlur = () => {
-        applyTypedDate();
+    const clearValue = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        setDd(""); setMm(""); setYyyy("");
+        onChange("");
     };
 
-    const handleSelectDate = (day: number) => {
-        const date = new Date(viewDate.getFullYear(), viewDate.getMonth(), day);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, "0");
-        const d = String(day).padStart(2, "0");
-        onChange(`${year}-${month}-${d}`);
+    // ── Calendar logic ────────────────────────────────────────────────
+    const totalDays = daysInMonth(navYear, navMonth);
+    const startDay = firstDayOfMonth(navYear, navMonth);
+    const daysArray = Array.from({ length: 42 }, (_, i) => {
+        const dayNum = i - startDay + 1;
+        return (dayNum > 0 && dayNum <= totalDays) ? dayNum : null;
+    });
+
+    const startYearGrid = navYear - 6;
+    const yearsArray = Array.from({ length: 12 }, (_, i) => startYearGrid + i);
+
+    const handleSelectDay = (day: number) => {
+        const dateStr = `${navYear}-${String(navMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        if (minDate && dateStr < minDate) return;
+        if (maxDate && dateStr > maxDate) return;
+        onChange(dateStr);
+        setDd(String(day).padStart(2, "0"));
+        setMm(String(navMonth + 1).padStart(2, "0"));
+        setYyyy(String(navYear));
         setIsOpen(false);
     };
 
-    const handleSelectMonth = (monthIndex: number) => {
-        setViewDate(new Date(viewDate.getFullYear(), monthIndex, 1));
-        setView("days");
+    const handlePrev = (e: React.MouseEvent) => {
+        e.preventDefault();
+        if (view === "days") {
+            if (navMonth === 0) { setNavMonth(11); setNavYear(y => y - 1); }
+            else setNavMonth(m => m - 1);
+        } else if (view === "months") {
+            setNavYear(y => y - 1);
+        } else {
+            setNavYear(y => y - 12);
+        }
     };
 
-    const handleSelectYear = (year: number) => {
-        setViewDate(new Date(year, viewDate.getMonth(), 1));
-        setView("months");
+    const handleNext = (e: React.MouseEvent) => {
+        e.preventDefault();
+        if (view === "days") {
+            if (navMonth === 11) { setNavMonth(0); setNavYear(y => y + 1); }
+            else setNavMonth(m => m + 1);
+        } else if (view === "months") {
+            setNavYear(y => y + 1);
+        } else {
+            setNavYear(y => y + 12);
+        }
     };
 
-    // Click Outside
-    React.useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-                setIsOpen(false);
-                applyTypedDate(); // Validate and format on click-away
-            }
-        };
-        if (isOpen) document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, [isOpen, inputValue, value]);
-
-    // Data Generation
-    const totalDays = daysInMonth(viewDate);
-    const startDay = firstDayOfMonth(viewDate);
-
-    const daysArray = Array.from({ length: 42 }, (_, i) => {
-        const dayNumber = i - startDay + 1;
-        return (dayNumber > 0 && dayNumber <= totalDays) ? dayNumber : null;
-    });
-
-    const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-    const shortMonthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-    // Years for Year View (12 year grid centered(ish))
-    const currentYear = viewDate.getFullYear();
-    const startYear = currentYear - 6;
-    const yearsArray = Array.from({ length: 12 }, (_, i) => startYear + i);
+    const hasValue = !!(dd || mm || yyyy);
 
     return (
-        <div className={cn("relative w-full group", className)} ref={containerRef}>
-            {/* Trigger Container */}
+        <div
+            className={cn("relative w-full", className)}
+            ref={containerRef}
+        >
+            {/* ── Trigger ── */}
             <div
                 className={cn(
-                    "flex items-center w-full h-10 px-3 rounded-md border border-input bg-background text-sm ring-offset-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 transition-all",
-                    disabled && "cursor-not-allowed opacity-50"
+                    "flex items-center gap-1.5 w-full h-10 px-3 rounded-xl border border-input bg-background text-sm ring-offset-background transition-all cursor-text",
+                    isOpen && "ring-2 ring-blue-500 border-blue-500",
+                    disabled && "cursor-not-allowed opacity-50 pointer-events-none"
                 )}
+                onClick={() => { if (!disabled) { setIsOpen(true); dayRef.current?.focus(); } }}
             >
                 <CalendarIcon
-                    className="mr-2 h-4 w-4 shrink-0 opacity-50 cursor-pointer hover:opacity-100 transition-opacity"
-                    onClick={() => !disabled && setIsOpen(!isOpen)}
+                    className="h-4 w-4 shrink-0 text-muted-foreground/50 cursor-pointer hover:text-blue-500 transition-colors"
+                    onClick={(e) => { e.stopPropagation(); if (!disabled) setIsOpen(o => !o); }}
                 />
-                <input
-                    type="text"
-                    placeholder={placeholder}
-                    value={inputValue}
-                    onChange={(e) => setInputValue(e.target.value)}
-                    onBlur={handleInputBlur}
-                    onKeyDown={handleInputKeyDown}
-                    disabled={disabled}
-                    className="w-full bg-transparent border-none outline-none focus:outline-none focus:ring-0 p-0 text-sm placeholder:text-muted-foreground"
-                    onClick={() => !disabled && setIsOpen(true)}
-                />
+
+                {/* Segmented input: DD / MM / YYYY */}
+                <div className="flex items-center gap-0 flex-1 select-none font-mono">
+                    <input
+                        ref={dayRef}
+                        type="text"
+                        inputMode="numeric"
+                        value={dd}
+                        onChange={handleDayChange}
+                        onKeyDown={(e) => handleKeyDown(e, setDd, dd, 1, 31, undefined, monRef)}
+                        onFocus={() => setIsOpen(true)}
+                        placeholder="DD"
+                        maxLength={2}
+                        className="w-7 bg-transparent border-none outline-none focus:outline-none focus:ring-0 text-center p-0 placeholder:text-muted-foreground/50 text-sm"
+                    />
+                    <span className="text-muted-foreground/60 select-none">/</span>
+                    <input
+                        ref={monRef}
+                        type="text"
+                        inputMode="numeric"
+                        value={mm}
+                        onChange={handleMonthChange}
+                        onKeyDown={(e) => handleKeyDown(e, setMm, mm, 1, 12, dayRef, yrRef)}
+                        onFocus={() => setIsOpen(true)}
+                        placeholder="MM"
+                        maxLength={2}
+                        className="w-7 bg-transparent border-none outline-none focus:outline-none focus:ring-0 text-center p-0 placeholder:text-muted-foreground/50 text-sm"
+                    />
+                    <span className="text-muted-foreground/60 select-none">/</span>
+                    <input
+                        ref={yrRef}
+                        type="text"
+                        inputMode="numeric"
+                        value={yyyy}
+                        onChange={handleYearChange}
+                        onKeyDown={(e) => handleKeyDown(e, setYyyy, yyyy, 1900, 2100, monRef, undefined)}
+                        onFocus={() => setIsOpen(true)}
+                        placeholder="YYYY"
+                        maxLength={4}
+                        className="w-12 bg-transparent border-none outline-none focus:outline-none focus:ring-0 text-center p-0 placeholder:text-muted-foreground/50 text-sm"
+                    />
+                </div>
+
+                {/* Clear button */}
+                {hasValue && !disabled && (
+                    <button
+                        type="button"
+                        onClick={clearValue}
+                        className="h-5 w-5 rounded-full flex items-center justify-center text-muted-foreground/50 hover:text-rose-500 hover:bg-rose-50 transition-colors shrink-0"
+                    >
+                        <X className="h-3 w-3" />
+                    </button>
+                )}
             </div>
 
-            {/* Dropdown - match SearchableSelect (rounded-md container) */}
+            {/* ── Dropdown Calendar ── */}
             {isOpen && (
-                <div className="absolute top-[calc(100%+4px)] left-0 z-50 w-[280px] rounded-md border bg-popover text-popover-foreground shadow-md animate-in fade-in-0 zoom-in-95 p-3">
+                <div className="absolute top-[calc(100%+6px)] left-0 z-50 w-[290px] rounded-xl border bg-popover text-popover-foreground shadow-xl animate-in fade-in-0 zoom-in-95 p-3">
 
-                    {/* Navigation Header */}
-                    <div className="flex items-center justify-between mb-2">
-                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md" onClick={handlePrev} type="button">
+                    {/* Nav Header */}
+                    <div className="flex items-center justify-between mb-3">
+                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={handlePrev} type="button">
                             <ChevronLeft className="h-4 w-4" />
                         </Button>
 
-                        <div className="flex gap-1">
+                        <div className="flex items-center gap-1">
                             <button
                                 type="button"
                                 onClick={() => setView("months")}
-                                className={cn("text-sm font-semibold hover:bg-accent hover:text-accent-foreground px-2 py-1 rounded-md transition-colors", view === 'months' && "bg-accent")}
+                                className={cn(
+                                    "text-sm font-semibold hover:bg-accent px-2 py-1 rounded-lg transition-colors",
+                                    view === "months" && "bg-accent"
+                                )}
                             >
-                                {monthNames[viewDate.getMonth()]}
+                                {SHORT_MONTHS[navMonth]}
                             </button>
                             <button
                                 type="button"
-                                onClick={() => setView("years")}
-                                className={cn("text-sm font-semibold hover:bg-accent hover:text-accent-foreground px-2 py-1 rounded-md transition-colors", view === 'years' && "bg-accent")}
+                                onClick={() => setView(v => v === "years" ? "days" : "years")}
+                                className={cn(
+                                    "text-sm font-semibold hover:bg-accent px-2 py-1 rounded-lg transition-colors tabular-nums",
+                                    view === "years" && "bg-accent"
+                                )}
                             >
-                                {viewDate.getFullYear()}
+                                {navYear}
                             </button>
                         </div>
 
-                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md" onClick={handleNext} type="button">
+                        <Button variant="ghost" size="icon" className="h-7 w-7 rounded-lg" onClick={handleNext} type="button">
                             <ChevronRight className="h-4 w-4" />
                         </Button>
                     </div>
 
-                    {/* View: Days */}
+                    {/* Day Grid */}
                     {view === "days" && (
-                        <div className="animate-in slide-in-from-left-2 duration-200">
-                            <div className="grid grid-cols-7 gap-1 text-center mb-1">
-                                {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d, idx) => (
-                                    <div key={d} className={cn("text-[0.75rem] font-medium text-muted-foreground", (idx === 0 || idx === 6) && "text-red-500/80")}>
-                                        {d}
-                                    </div>
+                        <div className="animate-in fade-in-0 duration-150">
+                            <div className="grid grid-cols-7 mb-1.5">
+                                {DAYS_OF_WEEK.map((d, i) => (
+                                    <div key={d} className={cn("text-[10px] font-semibold text-center text-muted-foreground uppercase", (i === 0 || i === 6) && "text-rose-400")}>{d}</div>
                                 ))}
                             </div>
-                            <div className="grid grid-cols-7 gap-1">
+                            <div className="grid grid-cols-7 gap-y-0.5">
                                 {daysArray.map((day, i) => {
                                     if (!day) return <div key={i} />;
-
-                                    const currentObj = new Date(viewDate.getFullYear(), viewDate.getMonth(), day);
-                                    const currentDateStr = `${viewDate.getFullYear()}-${String(viewDate.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                                    const isSelected = value === currentDateStr;
-                                    const isToday = new Date().toDateString() === currentObj.toDateString();
-                                    const isWeekend = currentObj.getDay() === 0 || currentObj.getDay() === 6;
-
-                                    // Disable logic
-                                    const isBeforeMin = minDate ? currentDateStr < minDate : false;
-                                    const isAfterMax = maxDate ? currentDateStr > maxDate : false;
-                                    const isDisabled = disabled || isBeforeMin || isAfterMax;
+                                    const dateStr = `${navYear}-${String(navMonth + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                                    const isSelected = value === dateStr;
+                                    const isToday = new Date().toDateString() === new Date(navYear, navMonth, day).toDateString();
+                                    const isWeekend = new Date(navYear, navMonth, day).getDay() === 0 || new Date(navYear, navMonth, day).getDay() === 6;
+                                    const isDisabled = (minDate && dateStr < minDate) || (maxDate && dateStr > maxDate) || false;
 
                                     return (
                                         <button
                                             key={i}
                                             type="button"
                                             disabled={isDisabled}
-                                            onClick={() => !isDisabled && handleSelectDate(day)}
+                                            onClick={() => handleSelectDay(day)}
                                             className={cn(
-                                                "h-8 w-8 rounded-md text-xs flex items-center justify-center transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 relative",
-                                                isDisabled && "text-muted-foreground opacity-30 cursor-not-allowed",
+                                                "h-8 w-full rounded-lg text-xs flex items-center justify-center transition-all focus:outline-none font-medium",
+                                                isDisabled && "opacity-30 cursor-not-allowed",
                                                 !isDisabled && !isSelected && "hover:bg-accent hover:text-accent-foreground",
-                                                !isDisabled && !isSelected && isWeekend && "text-red-600 font-medium",
-                                                isSelected && "bg-primary text-primary-foreground font-bold hover:bg-primary/90 shadow-sm",
-                                                !isSelected && isToday && "bg-accent/50 text-accent-foreground font-semibold border border-primary/40",
-                                                !isSelected && isToday && isWeekend && "text-red-600"
+                                                !isDisabled && !isSelected && isWeekend && "text-rose-500",
+                                                isSelected && "bg-blue-600 text-white font-bold shadow-md shadow-blue-200",
+                                                !isSelected && isToday && "ring-1 ring-blue-400 bg-blue-50 text-blue-700 font-bold",
                                             )}
                                         >
                                             {day}
@@ -297,17 +382,17 @@ export function DatePicker({
                         </div>
                     )}
 
-                    {/* View: Months */}
+                    {/* Month Grid */}
                     {view === "months" && (
-                        <div className="grid grid-cols-3 gap-2 animate-in slide-in-from-left-2 duration-200 py-2">
-                            {shortMonthNames.map((m, idx) => (
+                        <div className="grid grid-cols-3 gap-2 py-1 animate-in fade-in-0 duration-150">
+                            {SHORT_MONTHS.map((m, idx) => (
                                 <button
                                     key={m}
                                     type="button"
-                                    onClick={() => handleSelectMonth(idx)}
+                                    onClick={() => { setNavMonth(idx); setView("days"); }}
                                     className={cn(
-                                        "h-9 rounded-md text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-all focus:outline-none focus:ring-2 ring-primary/20",
-                                        idx === viewDate.getMonth() && "bg-primary/10 text-primary border border-primary/20"
+                                        "h-9 rounded-lg text-sm font-medium hover:bg-accent transition-all",
+                                        idx === navMonth && "bg-blue-600 text-white font-bold shadow-sm shadow-blue-200",
                                     )}
                                 >
                                     {m}
@@ -316,18 +401,18 @@ export function DatePicker({
                         </div>
                     )}
 
-                    {/* View: Years */}
+                    {/* Year Grid */}
                     {view === "years" && (
-                        <div className="grid grid-cols-3 gap-2 animate-in slide-in-from-left-2 duration-200 py-2">
+                        <div className="grid grid-cols-3 gap-2 py-1 animate-in fade-in-0 duration-150">
                             {yearsArray.map((y) => (
                                 <button
                                     key={y}
                                     type="button"
-                                    onClick={() => handleSelectYear(y)}
+                                    onClick={() => { setNavYear(y); setView("months"); }}
                                     className={cn(
-                                        "h-9 rounded-md text-sm font-medium hover:bg-accent hover:text-accent-foreground transition-all focus:outline-none focus:ring-2 ring-primary/20",
-                                        y === viewDate.getFullYear() && "bg-primary/10 text-primary border border-primary/20",
-                                        y === new Date().getFullYear() && "text-blue-600 font-bold"
+                                        "h-9 rounded-lg text-sm font-medium hover:bg-accent transition-all tabular-nums",
+                                        y === navYear && "bg-blue-600 text-white font-bold shadow-sm shadow-blue-200",
+                                        y === new Date().getFullYear() && y !== navYear && "text-blue-600 font-bold",
                                     )}
                                 >
                                     {y}
@@ -336,23 +421,32 @@ export function DatePicker({
                         </div>
                     )}
 
-                    {/* Footer: Today Button (Blue) */}
-                    <div className="mt-3 pt-2 border-t flex justify-center">
+                    {/* Footer */}
+                    <div className="mt-3 pt-2.5 border-t flex items-center justify-between">
                         <button
                             type="button"
-                            className="text-xs font-bold text-blue-600 hover:text-blue-700 hover:bg-blue-50 px-4 py-1.5 rounded-md uppercase tracking-wider transition-colors"
+                            onClick={clearValue}
+                            className="text-xs font-semibold text-rose-500 hover:text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg transition-colors"
+                        >
+                            Clear
+                        </button>
+                        <button
+                            type="button"
                             onClick={() => {
                                 const today = new Date();
                                 const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-
-                                // Respect min/max on Today click
                                 if (minDate && todayStr < minDate) return;
                                 if (maxDate && todayStr > maxDate) return;
-
-                                setViewDate(today);
+                                setNavYear(today.getFullYear());
+                                setNavMonth(today.getMonth());
+                                setView("days");
                                 onChange(todayStr);
+                                setDd(String(today.getDate()).padStart(2, "0"));
+                                setMm(String(today.getMonth() + 1).padStart(2, "0"));
+                                setYyyy(String(today.getFullYear()));
                                 setIsOpen(false);
                             }}
+                            className="text-xs font-bold text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg uppercase tracking-wider transition-colors"
                         >
                             Today
                         </button>
