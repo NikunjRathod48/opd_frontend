@@ -488,7 +488,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
     const fetchPatients = async () => {
         try {
-            const data = await import("@/lib/api").then(m => m.api.get<any[]>("/patients"));
+            let url = '/patients';
+            if (user?.role === 'Patient') {
+                url = `/patients?patient_user_id=${user.id}`;
+            } else if (['HospitalAdmin', 'Receptionist', 'Doctor'].includes(user?.role || '') && user?.hospitalid) {
+                const hid = String(user.hospitalid).replace(/\D/g, '');
+                if (hid) url = `/patients?hospital_id=${hid}`;
+            }
+            const data = await import("@/lib/api").then(m => m.api.get<any[]>(url));
             if (Array.isArray(data)) {
                 const mappedPatients: Patient[] = data.map(p => ({
                     patientid: p.patient_id.toString(),
