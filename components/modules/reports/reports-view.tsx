@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { reportsService, DashboardAnalytics } from "@/services/reports-service";
 import { useToast } from "@/components/ui/toast";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useApi } from "@/hooks/use-api";
 
 const COLORS = ['#0ea5e9', '#22c55e', '#ef4444', '#eab308'];
 
@@ -21,39 +22,22 @@ export function ReportsView() {
     const isSuperAdmin = user?.role === 'SuperAdmin';
     const isGroupAdmin = user?.role === 'GroupAdmin';
 
-    const [isLoading, setIsLoading] = useState(true);
-    const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null);
-
     const userRole = user?.role;
     const hospitalId = user?.hospitalid;
     const groupId = user?.hospitalgroupid;
 
-    useEffect(() => {
-        let isMounted = true;
-        const fetchAnalytics = async () => {
-            setIsLoading(true);
-            try {
-                let hId = null;
-                let gId = null;
+    let hId = null;
+    let gId = null;
+    if (userRole === 'HospitalAdmin') hId = hospitalId;
+    if (userRole === 'GroupAdmin') gId = groupId;
 
-                if (userRole === 'HospitalAdmin') hId = hospitalId;
-                if (userRole === 'GroupAdmin') gId = groupId;
+    const url = userRole ? (
+        gId ? `/reports/dashboard-analytics?hospitalGroupId=${gId}` :
+        hId ? `/reports/dashboard-analytics?hospitalId=${hId}` :
+        `/reports/dashboard-analytics`
+    ) : null;
 
-                const data = await reportsService.getDashboardAnalytics(hId, gId);
-                if (isMounted) setAnalytics(data);
-            } catch (err: any) {
-                if (isMounted) addToast("Failed to load dashboard analytics.", "error");
-                console.error(err);
-            } finally {
-                if (isMounted) setIsLoading(false);
-            }
-        };
-
-        if (userRole) {
-            fetchAnalytics();
-        }
-        return () => { isMounted = false; };
-    }, [userRole, hospitalId, groupId, addToast]);
+    const { data: analytics = null, isLoading } = useApi<DashboardAnalytics>(url);
 
     if (isLoading || !analytics) {
         return (

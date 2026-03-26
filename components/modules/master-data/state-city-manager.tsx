@@ -15,6 +15,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { cn } from "@/lib/utils";
 import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
 import { api } from "@/lib/api";
+import { useApi } from "@/hooks/use-api";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/context/auth-context";
 
@@ -39,11 +40,10 @@ export function StateCityManager() {
     const { addToast } = useToast();
 
     // --- State ---
-    const [states, setStates] = useState<State[]>([]);
-    const [cities, setCities] = useState<City[]>([]);
+    const { data: states = [], isLoading: isStatesLoading, mutate: mutateStates } = useApi<State[]>('/master-data/states');
+    const { data: cities = [], isLoading: isCitiesLoading, mutate: mutateCities } = useApi<City[]>('/master-data/cities');
+    const isLoading = isStatesLoading || isCitiesLoading;
     const [selectedState, setSelectedState] = useState<State | null>(null);
-
-    const [isLoading, setIsLoading] = useState(false);
 
     // Search
     const [stateSearch, setStateSearch] = useState("");
@@ -76,35 +76,21 @@ export function StateCityManager() {
         }
     }, [selectedState]);
 
-    // --- Fetching ---
-    const fetchData = async () => {
-        setIsLoading(true);
-        try {
-            const [statesRes, citiesRes] = await Promise.all([
-                api.get<State[]>('/master-data/states'),
-                api.get<City[]>('/master-data/cities')
-            ]);
-            setStates(statesRes);
-            setCities(citiesRes);
-
-            // Maintain selection if updating
-            if (selectedState) {
-                const updatedState = statesRes.find(s => s.state_id === selectedState.state_id);
-                if (updatedState) setSelectedState(updatedState);
-            } else if (statesRes.length > 0) {
-                // Optional: Auto-select first? Maybe not for State manager.
-            }
-        } catch (error) {
-            console.error(error);
-            addToast("Failed to fetch data", "error");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
+    // Keep selected state fresh
     useEffect(() => {
-        fetchData();
-    }, []);
+        if (selectedState && states.length > 0) {
+            const updated = states.find(s => s.state_id === selectedState.state_id);
+            if (updated && (updated.state_name !== selectedState.state_name || updated.is_active !== selectedState.is_active)) {
+                setSelectedState(updated);
+            }
+        }
+    }, [states, selectedState]);
+
+    // --- Fetching ---
+    const fetchData = () => {
+        mutateStates();
+        mutateCities();
+    };
 
     // --- Computed ---
     const filteredStates = useMemo(() => {

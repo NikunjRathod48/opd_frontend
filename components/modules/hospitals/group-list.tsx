@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/context/auth-context";
 import { api } from "@/lib/api";
+import { useApi } from "@/hooks/use-api";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -44,7 +45,6 @@ import {
     Building2,
     Phone,
     Mail,
-    MapPin,
     Plus,
     Pencil,
     Eye,
@@ -98,7 +98,7 @@ const groupSchema = z.object({
         .string()
         .length(10, "Phone must be exactly 10 digits")
         .regex(/^\d+$/, "Phone must be numeric"),
-    contact_email: z.string().email("Invalid email").optional().or(z.literal("")),
+    contact_email: z.email("Invalid email").optional().or(z.literal("")),
 });
 type GroupFormValues = z.infer<typeof groupSchema>;
 
@@ -177,8 +177,7 @@ export function GroupList() {
     const { user, getRoleBasePath } = useAuth();
     const { addToast } = useToast();
 
-    const [hospitalGroups, setHospitalGroups] = useState<HospitalGroup[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const { data: hospitalGroups = [], isLoading, isValidating: isRefreshing, mutate: fetchGroups } = useApi<HospitalGroup[]>("/hospital-groups");
     const [searchQuery, setSearchQuery] = useState("");
     const [isFilterOpen, setIsFilterOpen] = useState(false);
 
@@ -200,28 +199,15 @@ export function GroupList() {
     const [viewingGroup, setViewingGroup] = useState<HospitalGroup | null>(null);
     const [isViewOpen, setIsViewOpen] = useState(false);
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [viewingAdmin, setViewingAdmin] = useState<any | null>(null);
     const [isAdminViewOpen, setIsAdminViewOpen] = useState(false);
+    const [actionLoading, setActionLoading] = useState<string | null>(null);
 
     const form = useForm<GroupFormValues>({
         resolver: zodResolver(groupSchema),
         defaultValues: { group_name: "", group_code: "", description: "", registration_no: "", contact_phone: "", contact_email: "" },
     });
-
-    // ── Data ────────────────────────────────────────────────────────────────────
-    const fetchGroups = async () => {
-        setIsLoading(true);
-        try {
-            const data = await api.get<HospitalGroup[]>("/hospital-groups");
-            setHospitalGroups(data);
-        } catch {
-            addToast("Failed to load hospital groups", "error");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    useEffect(() => { fetchGroups(); }, []);
 
     // ── Filtering ───────────────────────────────────────────────────────────────
     const filteredGroups = useMemo(() => {
@@ -283,7 +269,9 @@ export function GroupList() {
         setIsModalOpen(true);
     };
 
-    const handleOpenEdit = (group: HospitalGroup) => {
+    const handleOpenEdit = async (group: HospitalGroup) => {
+        setActionLoading(`${group.hospital_group_id}-edit`);
+        await new Promise(r => setTimeout(r, 400));
         setIsEditing(true);
         setEditingId(group.hospital_group_id);
         form.reset({
@@ -295,6 +283,15 @@ export function GroupList() {
             contact_email: group.contact_email || "",
         });
         setIsModalOpen(true);
+        setActionLoading(null);
+    };
+
+    const handleOpenView = async (group: HospitalGroup) => {
+        setActionLoading(`${group.hospital_group_id}-view`);
+        await new Promise(r => setTimeout(r, 400));
+        setViewingGroup(group);
+        setIsViewOpen(true);
+        setActionLoading(null);
     };
 
     const onSubmit = async (data: GroupFormValues) => {
@@ -308,6 +305,7 @@ export function GroupList() {
             addToast(`Hospital Group ${isEditing ? "updated" : "created"} successfully`, "success");
             setIsModalOpen(false);
             fetchGroups();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (error: any) {
             addToast(error.message || "Failed to save group", "error");
         } finally {
@@ -338,11 +336,11 @@ export function GroupList() {
                     </Button>
                     <Button
                         variant="outline"
-                        onClick={fetchGroups}
-                        disabled={isLoading}
+                        onClick={() => fetchGroups()}
+                        disabled={isLoading || isRefreshing}
                         className="gap-2 rounded-xl h-11 px-4 border-slate-200 dark:border-slate-800 font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200"
                     >
-                        <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+                        <RefreshCw className={cn("h-4 w-4", (isLoading || isRefreshing) && "animate-spin")} />
                     </Button>
                     {user?.role === "SuperAdmin" && (
                         <Button
@@ -509,18 +507,20 @@ export function GroupList() {
                                         <div className="absolute top-3 right-3 flex gap-1.5 z-10">
                                             <button
                                                 title="View Details"
-                                                onClick={() => { setViewingGroup(group); setIsViewOpen(true); }}
-                                                className="h-8 w-8 rounded-lg bg-white/70 dark:bg-slate-800/70 hover:bg-violet-50 dark:hover:bg-violet-900/30 text-slate-500 hover:text-violet-600 flex items-center justify-center backdrop-blur-md transition-colors shadow-sm"
+                                                onClick={() => handleOpenView(group)}
+                                                disabled={actionLoading !== null}
+                                                className="h-8 w-8 rounded-lg bg-white/70 dark:bg-slate-800/70 hover:bg-violet-50 dark:hover:bg-violet-900/30 text-slate-500 hover:text-violet-600 flex items-center justify-center backdrop-blur-md transition-colors shadow-sm disabled:opacity-50"
                                             >
-                                                <Eye className="h-3.5 w-3.5" />
+                                                {actionLoading === `${group.hospital_group_id}-view` ? <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-500" /> : <Eye className="h-3.5 w-3.5" />}
                                             </button>
                                             {user?.role === "SuperAdmin" && (
                                                 <button
                                                     title="Edit Group"
+                                                    disabled={actionLoading !== null}
                                                     onClick={e => { e.stopPropagation(); handleOpenEdit(group); }}
-                                                    className="h-8 w-8 rounded-lg bg-white/70 dark:bg-slate-800/70 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-slate-500 hover:text-indigo-600 flex items-center justify-center backdrop-blur-md transition-colors shadow-sm"
+                                                    className="h-8 w-8 rounded-lg bg-white/70 dark:bg-slate-800/70 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-slate-500 hover:text-indigo-600 flex items-center justify-center backdrop-blur-md transition-colors shadow-sm disabled:opacity-50"
                                                 >
-                                                    <Pencil className="h-3.5 w-3.5" />
+                                                    {actionLoading === `${group.hospital_group_id}-edit` ? <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" /> : <Pencil className="h-3.5 w-3.5" />}
                                                 </button>
                                             )}
                                         </div>

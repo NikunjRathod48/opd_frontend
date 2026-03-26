@@ -42,7 +42,7 @@ const hospitalSchema = z.object({
     contact_phone: z.string()
         .optional()
         .refine((val) => !val || (val.length === 10 && /^\d+$/.test(val)), "Official Phone must be exactly 10 digits and numeric"),
-    contact_email: z.string().email("Invalid email address").optional().or(z.literal('')),
+    contact_email: z.email("Invalid email address").optional().or(z.literal('')),
     description: z.string().optional(),
 });
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,12 +10,11 @@ import { Plus, Search, Pencil, Trash2, Layers, MoreVertical, CheckCircle2, Build
 import { useToast } from "@/components/ui/toast";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api";
 import { useAuth } from "@/context/auth-context";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Department } from "@/types/clinical";
 import { clinicalService } from "@/services/clinical-service";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useApi } from "@/hooks/use-api";
 
 export function DepartmentList() {
     const { user } = useAuth();
@@ -23,53 +22,16 @@ export function DepartmentList() {
     const isHospitalAdmin = user?.role === 'HospitalAdmin';
     const hospitalId = user?.hospitalid ? parseInt(user.hospitalid) : undefined;
 
-    // -- State --
-    const [departments, setDepartments] = useState<Department[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [searchQuery, setSearchQuery] = useState("");
+    // -- Fetch Data --
+    const url = user ? (hospitalId ? `/master-data/departments?hospital_id=${hospitalId}` : `/master-data/departments`) : null;
+    const { data: departments = [], isLoading, mutate: fetchData } = useApi<Department[]>(url);
 
-    // Modal State
+    // Form and Modal State
+    const [searchQuery, setSearchQuery] = useState("");
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
     const [editingId, setEditingId] = useState<number | null>(null);
-
-    // Delete Confirmation
-    const [deleteState, setDeleteState] = useState<{ open: boolean; id: number; name: string }>({
-        open: false,
-        id: 0,
-        name: ''
-    });
-
-    // Form Data
-    const [formData, setFormData] = useState<{
-        name: string;
-        code: string;
-        description: string;
-        is_active_in_hospital?: boolean;
-    }>({
-        name: "",
-        code: "",
-        description: "",
-        is_active_in_hospital: true
-    });
-
-    // -- Fetch Data --
-    const fetchData = async () => {
-        setIsLoading(true);
-        try {
-            const data = await clinicalService.getDepartments(hospitalId);
-            setDepartments(data);
-        } catch (error) {
-            console.error("Failed to fetch departments", error);
-            addToast("Failed to load departments", "error");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        if (user) fetchData();
-    }, [user, isHospitalAdmin, hospitalId]);
+    const [formData, setFormData] = useState({ name: "", code: "", description: "" });
 
     // -- Search Filter --
     const filteredDepartments = useMemo(() => {
@@ -88,7 +50,7 @@ export function DepartmentList() {
         if (!formData.code) return addToast("Code is required", "error");
 
         try {
-            const payload: any = {
+            const payload: Partial<Department> = {
                 department_name: formData.name,
                 department_code: formData.code,
                 description: formData.description
@@ -125,7 +87,7 @@ export function DepartmentList() {
                     is_active_in_hospital: !currentStatus,
                     // Pass ID back for strictly validating payload if needed, but param ID is sufficient
                     department_id: id
-                } as any, hospitalId);
+                } as unknown as Partial<Department>, hospitalId);
 
                 addToast(currentStatus ? "Department deactivated" : "Department activated", "success");
             } else {

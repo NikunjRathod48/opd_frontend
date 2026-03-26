@@ -1,15 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useForm, SubmitHandler } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useData, User } from "@/context/data-context";
 import { useAuth } from "@/context/auth-context";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import {
     Plus, Search, Shield, Building, Eye, Pencil, Mail, Phone,
     User as UserIcon, X, Building2, EyeOff, Filter, CheckCircle2,
@@ -24,6 +21,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { useApi } from "@/hooks/use-api";
 
 // ─── Zod Schemas ──────────────────────────────────────────────────────────────
 
@@ -37,7 +35,7 @@ const passwordSchema = z.string()
 
 const adminSchema = z.object({
     name:        z.string().min(2, "Min 2 characters"),
-    email:       z.string().email("Invalid email"),
+    email:       z.email("Invalid email"),
     phoneno:     z.string().length(10, "Must be 10 digits").regex(/^\d+$/, "Numbers only"),
     hospitalid:  z.string().min(1, "Hospital required"),
     joiningDate: z.string().min(1, "Joining date required"),
@@ -168,10 +166,10 @@ function StatCard({
 // ─── Admin Card ───────────────────────────────────────────────────────────────
 
 function AdminCard({
-    admin, index, getHospitalName, onView, onEdit, onToggle,
+    admin, index, getHospitalName, onView, onEdit, onToggle, actionLoading
 }: {
     admin: User; index: number; getHospitalName: (id?: string) => string;
-    onView: () => void; onEdit: () => void; onToggle: () => void;
+    onView: () => void; onEdit: () => void; onToggle: () => void; actionLoading: string | null;
 }) {
     const grad    = getGrad(admin.name);
     const isActive = admin.isactive;
@@ -206,36 +204,39 @@ function AdminCard({
                 <Tooltip content="View Profile">
                     <button
                         onClick={onView}
+                        disabled={actionLoading !== null}
                         className="h-7 w-7 rounded-lg bg-background/90 border border-border/60 shadow-sm
                                    flex items-center justify-center text-muted-foreground
                                    hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50
-                                   dark:hover:bg-blue-950/40 transition-all"
+                                   dark:hover:bg-blue-950/40 transition-all disabled:opacity-50"
                     >
-                        <Eye className="h-3.5 w-3.5" />
+                        {actionLoading === `${admin.userid}-view` ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" /> : <Eye className="h-3.5 w-3.5" />}
                     </button>
                 </Tooltip>
                 <Tooltip content="Edit">
                     <button
                         onClick={e => { e.stopPropagation(); onEdit(); }}
+                        disabled={actionLoading !== null}
                         className="h-7 w-7 rounded-lg bg-background/90 border border-border/60 shadow-sm
                                    flex items-center justify-center text-muted-foreground
                                    hover:text-violet-600 hover:border-violet-200 hover:bg-violet-50
-                                   dark:hover:bg-violet-950/40 transition-all"
+                                   dark:hover:bg-violet-950/40 transition-all disabled:opacity-50"
                     >
-                        <Pencil className="h-3.5 w-3.5" />
+                        {actionLoading === `${admin.userid}-edit` ? <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-500" /> : <Pencil className="h-3.5 w-3.5" />}
                     </button>
                 </Tooltip>
                 <Tooltip content={isActive ? "Deactivate" : "Activate"}>
                     <button
                         onClick={e => { e.stopPropagation(); onToggle(); }}
+                        disabled={actionLoading !== null}
                         className={cn(
-                            "h-7 w-7 rounded-lg border shadow-sm flex items-center justify-center transition-all",
+                            "h-7 w-7 rounded-lg border shadow-sm flex items-center justify-center transition-all disabled:opacity-50",
                             isActive
                                 ? "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-600 hover:bg-rose-100"
                                 : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-600 hover:bg-emerald-100"
                         )}
                     >
-                        {isActive ? <UserX className="h-3.5 w-3.5" /> : <UserCheck className="h-3.5 w-3.5" />}
+                        {actionLoading === `${admin.userid}-toggle` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : (isActive ? <UserX className="h-3.5 w-3.5" /> : <UserCheck className="h-3.5 w-3.5" />)}
                     </button>
                 </Tooltip>
             </div>
@@ -324,9 +325,11 @@ function AdminCard({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function HospitalAdminList() {
-    const { admins, hospitals, updateAdmin, toggleAdminStatus, refreshAdmins } = useData();
+    const { hospitals, updateAdmin, toggleAdminStatus } = useData();
     const { user }      = useAuth();
     const { addToast }  = useToast();
+
+    const { data: apiAdmins = [], isLoading: isAdminsLoading, isValidating: isRefreshing, mutate: refreshAdmins } = useApi<any[]>('/hospitals/admins');
 
     const [isModalOpen,    setIsModalOpen]    = useState(false);
     const [modalMode,      setModalMode]      = useState<"add" | "edit">("add");
@@ -334,8 +337,26 @@ export function HospitalAdminList() {
     const [selectedAdmin,  setSelectedAdmin]  = useState<User | null>(null);
     const [isSubmitting,   setIsSubmitting]   = useState(false);
     const [showPassword,   setShowPassword]   = useState(false);
-    const [isLoading,      setIsLoading]      = useState(true);
     const [isFilterOpen,   setIsFilterOpen]   = useState(false);
+    const [actionLoading,  setActionLoading]  = useState<string | null>(null);
+
+    const admins = useMemo<User[]>(() => apiAdmins.map((u: any) => {
+        const empRelation = u.employees_employees_user_idTousers;
+        const hospitalEmp = Array.isArray(empRelation) ? empRelation[0] : empRelation;
+        return {
+            userid: u.user_id.toString(),
+            email: u.email,
+            phoneno: u.phone_number,
+            role: 'HospitalAdmin',
+            isactive: u.is_active,
+            name: u.full_name,
+            hospitalid: hospitalEmp?.hospitals?.hospital_id?.toString() || "",
+            hospitalgroupid: hospitalEmp?.hospital_group_id?.toString() || u.hospital_group_id?.toString() || "",
+            profile_image_url: u.profile_image_url,
+            joiningDate: hospitalEmp?.joining_date ? new Date(hospitalEmp.joining_date).toISOString().split('T')[0] : undefined,
+            employeeid: hospitalEmp?.employee_id?.toString()
+        };
+    }), [apiAdmins]);
 
     // Filters
     const [generalSearch,    setGeneralSearch]    = useState("");
@@ -371,16 +392,6 @@ export function HospitalAdminList() {
     const getHospitalName = (id?: string) =>
         hospitals.find(h => h.hospitalid === id)?.hospitalname || "Unknown";
 
-    useEffect(() => {
-        const load = async () => {
-            setIsLoading(true);
-            try { await refreshAdmins(); }
-            catch (e) { console.error(e); }
-            finally { setIsLoading(false); }
-        };
-        load();
-    }, []);
-
     const filteredAdmins = hospAdmins.filter(a => {
         const { general, name, email, contact, hospitalId, status, start, end } = activeFilters;
         if (general) {
@@ -414,11 +425,32 @@ export function HospitalAdminList() {
         setIsModalOpen(true);
     };
 
-    const handleOpenEdit = (admin: User) => {
+    const handleOpenEdit = async (admin: User) => {
+        setActionLoading(`${admin.userid}-edit`);
+        await new Promise(r => setTimeout(r, 400));
         setSelectedAdmin(admin); setModalMode("edit");
         form.reset({ name: admin.name, email: admin.email, phoneno: admin.phoneno, hospitalid: admin.hospitalid || "", isactive: admin.isactive, password: "", joiningDate: admin.joiningDate || new Date().toISOString().split("T")[0] });
         setProfileImage(null); setProfileImageDisplay(admin.profile_image_url || null);
         setIsModalOpen(true);
+        setActionLoading(null);
+    };
+
+    const handleView = async (admin: User) => {
+        setActionLoading(`${admin.userid}-view`);
+        await new Promise(r => setTimeout(r, 400));
+        setSelectedAdmin(admin); setIsViewOpen(true);
+        setActionLoading(null);
+    };
+
+    const handleToggle = async (admin: User) => {
+        setActionLoading(`${admin.userid}-toggle`);
+        try {
+            await toggleAdminStatus(admin.userid);
+            addToast(`Admin ${admin.isactive ? "deactivated" : "activated"}`, "success");
+            await refreshAdmins();
+        } finally {
+            setActionLoading(null);
+        }
     };
 
     const handleCancel = () => {
@@ -494,13 +526,13 @@ export function HospitalAdminList() {
                     </div>
                     <div className="flex items-center gap-2 self-start">
                         <button
-                            onClick={() => { setIsLoading(true); refreshAdmins().finally(() => setIsLoading(false)); }}
-                            disabled={isLoading}
+                            onClick={() => refreshAdmins()}
+                            disabled={isAdminsLoading || isRefreshing}
                             className="inline-flex items-center gap-2 h-9 px-4 rounded-xl border border-border/60 bg-background
                                        text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50
                                        disabled:opacity-50 transition-all"
                         >
-                            <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+                            <RefreshCw className={cn("h-3.5 w-3.5", (isAdminsLoading || isRefreshing) && "animate-spin text-indigo-500")} />
                             Refresh
                         </button>
                         <button
@@ -533,7 +565,7 @@ export function HospitalAdminList() {
                 </motion.div>
 
                 {/* ── Stat Cards ── */}
-                {isLoading ? (
+                {isAdminsLoading ? (
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                         {[0, 1, 2, 3].map(i => (
                             <motion.div key={i} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>
@@ -567,7 +599,7 @@ export function HospitalAdminList() {
                 </motion.div>
 
                 {/* ── Cards Grid ── */}
-                {isLoading ? (
+                {isAdminsLoading ? (
                     <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {[...Array(8)].map((_, i) => (
                             <AdminCardSkeleton key={i} delay={i * 0.05} />
@@ -607,9 +639,10 @@ export function HospitalAdminList() {
                                     admin={admin}
                                     index={index}
                                     getHospitalName={getHospitalName}
-                                    onView={() => { setSelectedAdmin(admin); setIsViewOpen(true); }}
+                                    onView={() => handleView(admin)}
                                     onEdit={() => handleOpenEdit(admin)}
-                                    onToggle={() => { toggleAdminStatus(admin.userid); addToast(`Admin ${admin.isactive ? "deactivated" : "activated"}`, "success"); }}
+                                    onToggle={() => handleToggle(admin)}
+                                    actionLoading={actionLoading}
                                 />
                             ))}
                         </AnimatePresence>

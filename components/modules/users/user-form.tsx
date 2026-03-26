@@ -22,7 +22,7 @@ const phoneRegex = /^\d{10}$/;
 
 const baseSchema = z.object({
     full_name: z.string().min(1, "Full name required"),
-    email: z.string().email("Invalid email format").min(1, "Email required"),
+    email: z.email("Invalid email format").min(1, "Email required"),
     phone_number: z.string().regex(phoneRegex, "Must be exactly 10 digits"),
     password: z.string().optional(),
     avatar: z.string().optional(),

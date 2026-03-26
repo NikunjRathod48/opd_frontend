@@ -32,7 +32,7 @@ const patientSchema = z.object({
     gender: z.string().min(1, "Gender is required"),
     blood_group_id: z.string().optional(),
     phone_number: z.string().min(10, "Valid phone number required").optional().or(z.literal("")),
-    email: z.string().email("Invalid email").optional().or(z.literal("")),
+    email: z.email("Invalid email").optional().or(z.literal("")),
     address: z.string().min(1, "Address is required"),
     city_id: z.string().optional(),
     state_id: z.string().optional(),

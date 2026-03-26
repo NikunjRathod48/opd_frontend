@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "@/lib/api";
+import { useApi } from "@/hooks/use-api";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
@@ -109,8 +110,7 @@ function ViewInfoTile({ label, value, accent = "blue", mono = false }: { label: 
 export function UsersView() {
     const { user } = useAuth();
     const { addToast } = useToast();
-    const [users, setUsers] = useState<User[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const { data: users = [], isLoading, mutate: fetchUsers } = useApi<User[]>(user ? "/users" : null);
     const [searchQuery, setSearchQuery] = useState("");
     const [roleFilter, setRoleFilter] = useState("All");
     const [statusFilter, setStatusFilter] = useState("All");
@@ -122,22 +122,6 @@ export function UsersView() {
     const [selectedUser, setSelectedUser] = useState<any>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [fetchingAction, setFetchingAction] = useState<{ id: number, type: 'view' | 'edit' } | null>(null);
-
-    const fetchUsers = async () => {
-        setIsLoading(true);
-        try {
-            const data = await api.get<User[]>("/users");
-            setUsers(data);
-        } catch (error: any) {
-            addToast(error.message || "Failed to fetch users", "error");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        if (user) fetchUsers();
-    }, [user]);
 
     const availableRoles = useMemo(() => Array.from(new Set(users.map(u => u.role_name))).filter(Boolean), [users]);
 
@@ -257,7 +241,7 @@ export function UsersView() {
     const handleToggleStatus = async (userToToggle: User) => {
         const newStatus = !userToToggle.is_active;
         // Optimistic UI update
-        setUsers(prev => prev.map(u => u.user_id === userToToggle.user_id ? { ...u, is_active: newStatus } : u));
+        fetchUsers(users.map(u => u.user_id === userToToggle.user_id ? { ...u, is_active: newStatus } : u), { revalidate: false });
         try {
             const token = JSON.parse(localStorage.getItem("medcore_user") || "{}").access_token;
             const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/users/${userToToggle.user_id}/status`, {
@@ -269,7 +253,7 @@ export function UsersView() {
             addToast(`User ${newStatus ? 'activated' : 'deactivated'}`, "success");
         } catch (error) {
             // Revert
-            setUsers(prev => prev.map(u => u.user_id === userToToggle.user_id ? { ...u, is_active: !newStatus } : u));
+            fetchUsers(users.map(u => u.user_id === userToToggle.user_id ? { ...u, is_active: !newStatus } : u), { revalidate: false });
             addToast("Failed to toggle status", "error");
         }
     };
@@ -288,7 +272,7 @@ export function UsersView() {
                     </p>
                 </div>
                 <div className="flex items-center gap-2 self-start">
-                    <Button variant="outline" onClick={fetchUsers} disabled={isLoading} className="gap-2 rounded-xl h-11 px-5 border-slate-200 dark:border-slate-800 font-semibold transition-all duration-300 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200">
+                    <Button variant="outline" onClick={() => fetchUsers()} disabled={isLoading} className="gap-2 rounded-xl h-11 px-5 border-slate-200 dark:border-slate-800 font-semibold transition-all duration-300 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200">
                         <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} /> Refresh
                     </Button>
                     <Button onClick={handleOpenAdd} className="gap-2 rounded-xl h-11 px-6 bg-violet-600 hover:bg-violet-700 text-white font-semibold shadow-[0_2px_12px_rgba(124,58,237,0.35)] hover:shadow-[0_4px_16px_rgba(124,58,237,0.45)] transition-all">

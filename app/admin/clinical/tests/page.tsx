@@ -1,8 +1,9 @@
 "use client";
 
-import { ClinicalMasterLayout, BaseCategory, BaseItem } from "@/components/modules/master-data/clinical-master-layout";
+import { ClinicalMasterLayout } from "@/components/modules/master-data/clinical-master-layout";
 import { RoleGuard } from "@/components/auth/role-guard";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/components/ui/toast";
 import { Test, Department } from "@/types/clinical";
 import { clinicalService } from "@/services/clinical-service";
@@ -10,14 +11,13 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { DialogFooter, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { DialogFooter, Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip } from "@/components/ui/tooltip";
-import { useAuth } from "@/context/auth-context";
 import { Search, PackagePlus, Loader2, FlaskConical, X } from "lucide-react";
+import { useApi } from "@/hooks/use-api";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Skeleton } from "@/components/ui/skeleton";
 import { motion } from "framer-motion";
 
 export default function TestsPage() {
@@ -26,9 +26,25 @@ export default function TestsPage() {
     const isHospitalAdmin = user?.role === 'HospitalAdmin';
     const hospitalId = user?.hospitalid;
 
-    const [departments, setDepartments] = useState<Department[]>([]);
-    const [tests, setTests] = useState<Test[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    // Initial Fetch via SWR
+    const testUrl = user ? (isHospitalAdmin && hospitalId ? `/master-data/tests?hospital_id=${hospitalId}` : `/master-data/tests`) : null;
+    const deptUrl = user ? (isHospitalAdmin && hospitalId ? `/master-data/departments?hospital_id=${hospitalId}` : `/master-data/departments`) : null;
+
+    const { data: rawTests = [], isLoading: isTestsLoading, mutate: mutateTests } = useApi<Test[]>(testUrl);
+    const { data: rawDepts = [], isLoading: isDeptsLoading, mutate: mutateDepts } = useApi<Department[]>(deptUrl);
+    const isLoading = isTestsLoading || isDeptsLoading;
+
+    // Derived State
+    const tests = useMemo(() => {
+        if (isHospitalAdmin) return rawTests.filter((t: Test & { is_linked?: boolean }) => t.is_linked);
+        return rawTests;
+    }, [rawTests, isHospitalAdmin]);
+
+    const departments = useMemo(() => {
+        if (isHospitalAdmin) return rawDepts.filter((d: Department & { is_linked?: boolean }) => d.is_linked);
+        return rawDepts;
+    }, [rawDepts, isHospitalAdmin]);
+
     const [selectedDepartment, setSelectedDepartment] = useState<Department | null>(null);
 
     // Catalog State for Hospital Admin
@@ -37,44 +53,13 @@ export default function TestsPage() {
     const [catalogSearch, setCatalogSearch] = useState("");
     const [catalogLoading, setCatalogLoading] = useState(false);
 
-    // Initial Fetch
-    const fetchData = async () => {
-        setIsLoading(true);
-        try {
-            // Fetch Departments and Tests
-            const [deptsResponse, testsResponse] = await Promise.all([
-                clinicalService.getDepartments(isHospitalAdmin && hospitalId ? Number(hospitalId) : undefined),
-                clinicalService.getTests(isHospitalAdmin && hospitalId ? Number(hospitalId) : undefined)
-            ]);
-
-            // For Hospital Admins, filter out tests and departments not explicitly linked to their hospital
-            let testsData = testsResponse;
-            let deptsData = deptsResponse;
-
-            if (isHospitalAdmin) {
-                testsData = testsData.filter((t: any) => t.is_linked);
-                deptsData = deptsData.filter((d: any) => d.is_linked);
-            }
-
-            setDepartments(deptsData);
-            setTests(testsData);
-
-            if (deptsData.length > 0 && !selectedDepartment) {
-                setSelectedDepartment(deptsData[0]);
-            } else if (deptsData.length === 0) {
-                setSelectedDepartment(null as any);
-            }
-        } catch (error) {
-            console.error("Failed to load data", error);
-            addToast("Failed to load data", "error");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
     useEffect(() => {
-        if (user) fetchData();
-    }, [user, isHospitalAdmin, hospitalId]);
+        if (departments.length > 0 && (!selectedDepartment || !departments.find(d => d.department_id === selectedDepartment.department_id))) {
+            setSelectedDepartment(departments[0]);
+        } else if (departments.length === 0) {
+            setSelectedDepartment(null);
+        }
+    }, [departments, selectedDepartment]);
 
     // --- Hospital Admin Catalog Actions ---
     const fetchCatalogTests = async () => {
@@ -85,7 +70,7 @@ export default function TestsPage() {
             // Filter out ones already added to this hospital
             const existingIds = new Set(tests.map(t => t.test_id));
             setCatalogTests(data.filter(t => !existingIds.has(t.test_id)));
-        } catch (error) {
+        } catch {
             addToast("Failed to load catalog", "error");
         } finally {
             setCatalogLoading(false);
@@ -100,24 +85,13 @@ export default function TestsPage() {
                 price: test.price || 0
             }, Number(hospitalId));
 
-            const fullTest = { ...test, is_linked: true, is_active_in_hospital: true, price: test.price || 0 };
-            setTests(prev => [...prev, fullTest]);
+            mutateTests();
+            mutateDepts();
+
             setCatalogTests(prev => prev.filter(t => t.test_id !== test.test_id));
             addToast(`${test.test_name} added to your tests`, "success");
             setIsCatalogOpen(false); // Auto-close model after success
-
-            // Auto select its department if one isn't selected or we want to jump to it
-            const dept = departments.find(d => d.department_id === test.department_id);
-            if (dept && !selectedDepartment) setSelectedDepartment(dept);
-
-            // Re-fetch data silently in background
-            clinicalService.getTests(Number(hospitalId)).then(data => {
-                if (isHospitalAdmin) {
-                    setTests(data.filter((t: any) => t.is_linked));
-                }
-            }).catch(console.error);
-
-        } catch (error) {
+        } catch {
             addToast("Failed to link test", "error");
         }
     };
@@ -126,33 +100,20 @@ export default function TestsPage() {
     const handleAddItem = async (data: Partial<Test>) => {
         try {
             const newTest = await clinicalService.createTest(data);
-            setTests(prev => [...prev, newTest]);
+            mutateTests();
             addToast(`Test ${newTest.test_name} added`, "success");
-        } catch (e: any) {
-            addToast(e.message || "Failed to add test", "error");
+        } catch (e: unknown) {
+            addToast((e as Error).message || "Failed to add test", "error");
         }
     };
 
     const handleEditItem = async (item: Test, data: Partial<Test>) => {
         try {
-            const updated = await clinicalService.updateTest(item.test_id, data, isHospitalAdmin ? Number(hospitalId) : undefined);
-
-            setTests(prev => prev.map(t => {
-                if (t.test_id === item.test_id) {
-                    if (isHospitalAdmin) {
-                        return {
-                            ...t,
-                            price: data.price !== undefined ? data.price : t.price,
-                            is_active_in_hospital: data.is_active !== undefined ? data.is_active : (t as any).is_active_in_hospital
-                        };
-                    }
-                    return { ...t, ...data, ...updated };
-                }
-                return t;
-            }));
+            await clinicalService.updateTest(item.test_id, data, isHospitalAdmin ? Number(hospitalId) : undefined);
+            mutateTests();
             addToast(`Test updated`, "success");
-        } catch (e: any) {
-            addToast(e.message || "Failed to update test", "error");
+        } catch (e: unknown) {
+            addToast((e as Error).message || "Failed to update test", "error");
         }
     };
 
@@ -177,9 +138,9 @@ export default function TestsPage() {
             {test.description && <p className="text-xs text-muted-foreground line-clamp-2 mt-auto pt-2">{test.description}</p>}
 
             <div className="mt-3 pt-3 border-t border-dashed flex justify-between items-center">
-                {isHospitalAdmin && (test as any).base_price !== undefined ? (
+                {isHospitalAdmin && (test as Test & { base_price?: number }).base_price !== undefined ? (
                     <div className="flex flex-col">
-                        <span className="text-[10px] text-muted-foreground line-through">Base: ₹{(test as any).base_price}</span>
+                        <span className="text-[10px] text-muted-foreground line-through">Base: ₹{(test as Test & { base_price?: number }).base_price}</span>
                         <span className="font-bold text-sm text-blue-700 dark:text-blue-400">₹{test.price || 0}</span>
                     </div>
                 ) : (
@@ -515,7 +476,7 @@ function TestForm({
     category: Department,
     onClose: () => void,
     departments: Department[],
-    onSubmit: (data: any) => Promise<void>,
+    onSubmit: (data: Partial<Test>) => Promise<void>,
     isHospitalAdmin: boolean
 }) {
     const [formData, setFormData] = useState({
@@ -583,8 +544,8 @@ function TestForm({
                 <div className="space-y-2">
                     <Label>{isHospitalAdmin ? "Hospital Price (₹)" : "Base Price (₹)"}</Label>
                     <Input type="number" value={formData.price} onChange={e => setFormData({ ...formData, price: Number(e.target.value) })} placeholder="0.00" />
-                    {isHospitalAdmin && (initialData as any)?.base_price !== undefined && (
-                        <p className="text-xs text-muted-foreground mt-1">Master Price: ₹{(initialData as any).base_price}</p>
+                    {isHospitalAdmin && (initialData as Partial<Test> & { base_price?: number })?.base_price !== undefined && (
+                        <p className="text-xs text-muted-foreground mt-1">Master Price: ₹{(initialData as Partial<Test> & { base_price?: number }).base_price}</p>
                     )}
                 </div>
             </div>

@@ -15,48 +15,31 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip } from "@/components/ui/tooltip";
 import { useAuth } from "@/context/auth-context";
 import { Loader2 } from "lucide-react";
+import { useApi } from "@/hooks/use-api";
 
 export default function DiagnosesPage() {
     const { user } = useAuth();
     const isHospitalAdmin = user?.role === 'HospitalAdmin';
     const { addToast } = useToast();
-    const [departments, setDepartments] = useState<Department[]>([]);
-    const [diagnoses, setDiagnoses] = useState<Diagnosis[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    
+    const { data: departments = [], isLoading: isDeptLoading } = useApi<Department[]>('/master-data/departments');
+    const { data: diagnoses = [], isLoading: isDiagLoading, mutate: mutateDiag } = useApi<Diagnosis[]>('/master-data/diagnoses');
+    const isLoading = isDeptLoading || isDiagLoading;
+
     const [selectedDepartment, setSelectedDepartment] = useState<Department | null>(null);
 
-    // Initial Fetch
+    // Auto-select first department if available
     useEffect(() => {
-        const fetchData = async () => {
-            setIsLoading(true);
-            try {
-                // Fetch Departments and Diagnoses
-                const [deptsData, diagData] = await Promise.all([
-                    clinicalService.getDepartments(),
-                    clinicalService.getDiagnoses()
-                ]);
-                setDepartments(deptsData);
-                setDiagnoses(diagData);
-
-                // Auto-select first department if available
-                if (deptsData.length > 0 && !selectedDepartment) {
-                    setSelectedDepartment(deptsData[0]);
-                }
-            } catch (error) {
-                console.error("Failed to load data", error);
-                addToast("Failed to load data", "error");
-            } finally {
-                setIsLoading(false);
-            }
-        };
-        fetchData();
-    }, []);
+        if (departments.length > 0 && !selectedDepartment) {
+            setSelectedDepartment(departments[0]);
+        }
+    }, [departments, selectedDepartment]);
 
     // --- Actions ---
     const handleAddItem = async (data: Partial<Diagnosis>) => {
         try {
             const newDiag = await clinicalService.createDiagnosis(data);
-            setDiagnoses(prev => [...prev, newDiag]);
+            mutateDiag((prev) => [...(prev || []), newDiag], { revalidate: false });
             addToast(`Diagnosis ${newDiag.diagnosis_name} added`, "success");
         } catch (e: any) {
             addToast(e.message || "Failed to add Diagnosis", "error");
@@ -66,7 +49,7 @@ export default function DiagnosesPage() {
     const handleEditItem = async (item: Diagnosis, data: Partial<Diagnosis>) => {
         try {
             const updated = await clinicalService.updateDiagnosis(item.diagnosis_id, data);
-            setDiagnoses(prev => prev.map(d => d.diagnosis_id === item.diagnosis_id ? updated : d));
+            mutateDiag((prev) => (prev || []).map(d => d.diagnosis_id === item.diagnosis_id ? updated : d), { revalidate: false });
             addToast(`Diagnosis updated`, "success");
         } catch (e: any) {
             addToast(e.message || "Failed to update Diagnosis", "error");

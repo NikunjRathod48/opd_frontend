@@ -1,16 +1,14 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import {
     Search, Plus, RefreshCw, Mail, Phone, UserCog,
     CheckCircle2, Filter, Eye, EyeOff, Pencil, Shield,
-    User as UserIcon, X, Building2, Building, Lock, Trash2,
-    Users, UserCheck, UserX,
+    User as UserIcon, X, Building2, Building, Lock,
+    Users, UserCheck, UserX, Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import { DatePicker } from "@/components/ui/date-picker";
 import { ImageUpload } from "@/components/ui/image-upload";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -18,6 +16,7 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { motion, AnimatePresence } from "framer-motion";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import { useApi } from "@/hooks/use-api";
 
 import { useData, Receptionist } from "@/context/data-context";
 import { useAuth } from "@/context/auth-context";
@@ -38,7 +37,7 @@ const passwordSchema = z.string()
 
 const receptionistSchema = z.object({
     full_name:    z.string().min(2, "Min 2 characters"),
-    email:        z.string().email("Invalid email"),
+    email:        z.email("Invalid email"),
     phone_number: z.string().min(10, "Must be 10 digits").regex(/^\d+$/, "Numbers only"),
     hospital_id:  z.string().min(1, "Hospital required"),
     joining_date: z.string().min(1, "Joining date required"),
@@ -146,9 +145,9 @@ function StatCard({ label, value, icon: Icon, iconBg, glow, delay }: {
 
 // ─── Receptionist Card ────────────────────────────────────────────────────────
 
-function ReceptionistCard({ rec, getHospitalName, canManage, onView, onEdit, onToggle }: {
+function ReceptionistCard({ rec, getHospitalName, canManage, onView, onEdit, onToggle, actionLoading }: {
     rec: Receptionist; getHospitalName: (id?: string) => string;
-    canManage: boolean; onView: () => void; onEdit: () => void; onToggle: () => void;
+    canManage: boolean; onView: () => void; onEdit: () => void; onToggle: () => void; actionLoading: string | null;
 }) {
     const grad     = getGrad(rec.name);
     const isActive = rec.isactive;
@@ -179,28 +178,28 @@ function ReceptionistCard({ rec, getHospitalName, canManage, onView, onEdit, onT
                 <div className="absolute top-5 right-4 flex items-center gap-1.5 z-20
                                 opacity-0 group-hover:opacity-100 translate-y-1 group-hover:translate-y-0 transition-all duration-200">
                     <Tooltip content="View">
-                        <button onClick={onView}
+                        <button onClick={onView} disabled={actionLoading !== null}
                             className="h-7 w-7 rounded-lg bg-background/90 border border-border/60 shadow-sm flex items-center justify-center
-                                       text-muted-foreground hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-all">
-                            <Eye className="h-3.5 w-3.5" />
+                                       text-muted-foreground hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-all disabled:opacity-50">
+                            {actionLoading === `${rec.receptionistid}-view` ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" /> : <Eye className="h-3.5 w-3.5" />}
                         </button>
                     </Tooltip>
                     <Tooltip content="Edit">
-                        <button onClick={e => { e.stopPropagation(); onEdit(); }}
+                        <button onClick={e => { e.stopPropagation(); onEdit(); }} disabled={actionLoading !== null}
                             className="h-7 w-7 rounded-lg bg-background/90 border border-border/60 shadow-sm flex items-center justify-center
-                                       text-muted-foreground hover:text-violet-600 hover:border-violet-200 hover:bg-violet-50 dark:hover:bg-violet-950/40 transition-all">
-                            <Pencil className="h-3.5 w-3.5" />
+                                       text-muted-foreground hover:text-violet-600 hover:border-violet-200 hover:bg-violet-50 dark:hover:bg-violet-950/40 transition-all disabled:opacity-50">
+                            {actionLoading === `${rec.receptionistid}-edit` ? <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-500" /> : <Pencil className="h-3.5 w-3.5" />}
                         </button>
                     </Tooltip>
                     <Tooltip content={isActive ? "Deactivate" : "Activate"}>
-                        <button onClick={e => { e.stopPropagation(); onToggle(); }}
+                        <button onClick={e => { e.stopPropagation(); onToggle(); }} disabled={actionLoading !== null}
                             className={cn(
-                                "h-7 w-7 rounded-lg border shadow-sm flex items-center justify-center transition-all",
+                                "h-7 w-7 rounded-lg border shadow-sm flex items-center justify-center transition-all disabled:opacity-50",
                                 isActive
                                     ? "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-600 hover:bg-rose-100"
                                     : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-600 hover:bg-emerald-100"
                             )}>
-                            {isActive ? <UserX className="h-3.5 w-3.5" /> : <UserCheck className="h-3.5 w-3.5" />}
+                            {actionLoading === `${rec.receptionistid}-status` ? <Loader2 className="h-3.5 w-3.5 animate-spin text-red-500" /> : (isActive ? <UserX className="h-3.5 w-3.5" /> : <UserCheck className="h-3.5 w-3.5" />)}
                         </button>
                     </Tooltip>
                 </div>
@@ -265,11 +264,12 @@ function ReceptionistCard({ rec, getHospitalName, canManage, onView, onEdit, onT
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function ReceptionistList() {
-    const { receptionists, hospitals, refreshReceptionists, updateReceptionist } = useData();
+    const { hospitals, updateReceptionist } = useData();
     const { user }     = useAuth();
     const { addToast } = useToast();
 
-    const [isLoading,     setIsLoading]     = useState(true);
+    const { data: apiRecs = [], isLoading: isRecsLoading, isValidating: isRefreshing, mutate: refreshReceptionists } = useApi<any[]>('/hospitals/receptionists');
+
     const [isFilterOpen,  setIsFilterOpen]  = useState(false);
     const [isModalOpen,   setIsModalOpen]   = useState(false);
     const [modalMode,     setModalMode]     = useState<"add" | "edit">("add");
@@ -279,6 +279,23 @@ export function ReceptionistList() {
     const [selectedRec,   setSelectedRec]   = useState<Receptionist | null>(null);
     const [profileImage,  setProfileImage]  = useState<File | null>(null);
     const [profileDisplay, setProfileDisplay] = useState<File | string | null>(null);
+    const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+    const receptionists = useMemo<Receptionist[]>(() => apiRecs.map((u: any) => {
+        const empRelation = u.employees_employees_user_idTousers;
+        const hospitalEmp = Array.isArray(empRelation) ? empRelation[0] : empRelation;
+        return {
+            receptionistid: u.user_id.toString(),
+            userid: u.user_id.toString(),
+            name: u.full_name,
+            email: u.email,
+            contact: u.phone_number,
+            hospitalid: hospitalEmp?.hospitals?.hospital_id?.toString() || "",
+            isactive: u.is_active,
+            joiningDate: hospitalEmp?.joining_date ? new Date(hospitalEmp.joining_date).toISOString().split('T')[0] : undefined,
+            profile_image_url: u.profile_image_url
+        };
+    }), [apiRecs]);
 
     // Filters
     const [generalSearch,    setGeneralSearch]    = useState("");
@@ -300,13 +317,9 @@ export function ReceptionistList() {
 
     const canManage    = ["SuperAdmin", "GroupAdmin", "HospitalAdmin"].includes(user?.role || "");
     const myGroupId    = user?.hospitalgroupid?.toString();
-    const myHospitals  = hospitals.filter(h => myGroupId ? h.hospitalgroupid.toString() === myGroupId : true);
+    const myHospitals  = user?.role === "SuperAdmin" ? hospitals : hospitals.filter(h => h.hospitalgroupid === myGroupId);
     const getHospitalName = (id?: string) => hospitals.find(h => h.hospitalid === id)?.hospitalname || "Unknown";
     const myRecs       = receptionists.filter(r => myHospitals.some(h => h.hospitalid === r.hospitalid));
-
-    useEffect(() => {
-        refreshReceptionists?.().finally(() => setIsLoading(false));
-    }, []);
 
     const filteredRecs = useMemo(() => myRecs.filter(rec => {
         const { general, name, email, contact, hospitalId, status, start, end } = activeFilters;
@@ -342,14 +355,24 @@ export function ReceptionistList() {
 
     const handleOpenAdd = () => {
         setModalMode("add"); setSelectedRec(null); setProfileImage(null); setProfileDisplay(null);
-        form.reset({ full_name: "", email: "", phone_number: "", password: "", joining_date: new Date().toISOString().split("T")[0], hospital_id: user?.hospitalid || (myHospitals.length === 1 ? myHospitals[0].hospitalid : "") });
+        form.reset({ full_name: "", email: "", phone_number: "", password: "", joining_date: new Date().toISOString().split("T")[0], hospital_id: canManage && myHospitals.length === 1 ? myHospitals[0].hospitalid : "", });
         setIsModalOpen(true);
     };
 
-    const handleOpenEdit = (rec: Receptionist) => {
+    const handleOpenEdit = async (rec: Receptionist) => {
+        setActionLoading(`${rec.receptionistid}-edit`);
+        await new Promise(r => setTimeout(r, 400));
         setModalMode("edit"); setSelectedRec(rec); setProfileImage(null); setProfileDisplay(rec.profile_image_url || null);
         form.reset({ full_name: rec.name, email: rec.email, phone_number: rec.contact, joining_date: rec.joiningDate, hospital_id: rec.hospitalid, password: "" });
         setIsModalOpen(true);
+        setActionLoading(null);
+    };
+
+    const handleView = async (rec: Receptionist) => {
+        setActionLoading(`${rec.receptionistid}-view`);
+        await new Promise(r => setTimeout(r, 400));
+        setSelectedRec(rec); setIsViewOpen(true);
+        setActionLoading(null);
     };
 
     const handleCancel = () => {
@@ -424,11 +447,11 @@ export function ReceptionistList() {
                     </div>
                     <div className="flex items-center gap-2 self-start">
                         <button
-                            onClick={() => { setIsLoading(true); refreshReceptionists?.().finally(() => setIsLoading(false)); }}
-                            disabled={isLoading}
+                            onClick={() => refreshReceptionists()}
+                            disabled={isRecsLoading || isRefreshing}
                             className="inline-flex items-center gap-2 h-9 px-4 rounded-xl border border-border/60 bg-background text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-50 transition-all"
                         >
-                            <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+                            <RefreshCw className={cn("h-3.5 w-3.5", (isRecsLoading || isRefreshing) && "animate-spin text-blue-500")} />
                             Refresh
                         </button>
                         <button
@@ -460,7 +483,7 @@ export function ReceptionistList() {
                 </motion.div>
 
                 {/* ── Stat Cards ── */}
-                {isLoading ? (
+                {isRecsLoading ? (
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                         {[0,1,2,3].map(i => (
                             <motion.div key={i} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>
@@ -492,7 +515,7 @@ export function ReceptionistList() {
                 </motion.div>
 
                 {/* ── Cards Grid ── */}
-                {isLoading ? (
+                {isRecsLoading ? (
                     <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                         {[...Array(8)].map((_, i) => <ReceptionistCardSkeleton key={i} delay={i * 0.05} />)}
                     </div>
@@ -525,9 +548,10 @@ export function ReceptionistList() {
                                     rec={rec}
                                     getHospitalName={getHospitalName}
                                     canManage={canManage}
-                                    onView={() => { setSelectedRec(rec); setIsViewOpen(true); }}
+                                    onView={() => handleView(rec)}
                                     onEdit={() => handleOpenEdit(rec)}
                                     onToggle={() => handleToggleStatus(rec)}
+                                    actionLoading={actionLoading}
                                 />
                             ))}
                         </AnimatePresence>

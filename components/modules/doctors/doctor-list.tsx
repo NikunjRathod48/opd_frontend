@@ -33,7 +33,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 const doctorSchema = z.object({
     full_name:          z.string().min(1, "Full name required"),
-    email:              z.string().email("Invalid email"),
+    email:              z.email("Invalid email"),
     phone_number:       z.string().length(10, "Must be 10 digits").regex(/^\d+$/, "Numbers only"),
     password:           z.string().optional().refine(v => !v || /^\S*$/.test(v), "No spaces").refine(v => !v || v.length >= 6, "Min 6 chars"),
     gender:             z.enum(["Male", "Female", "Other"]),

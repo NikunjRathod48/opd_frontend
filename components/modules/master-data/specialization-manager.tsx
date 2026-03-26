@@ -1,14 +1,14 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Search, Plus, Pencil, CheckCircle2, Stethoscope, Loader2, RefreshCw, UserX, UserCheck, X, Users, Activity } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Search, Plus, Pencil, CheckCircle2, Stethoscope, Loader2, RefreshCw, UserX, UserCheck, X, Users } from "lucide-react";
 import { useToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
 import { api } from "@/lib/api";
+import { useApi } from "@/hooks/use-api";
 import { useAuth } from "@/context/auth-context";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -45,6 +45,7 @@ const getGrad = (name: string) => GRADIENTS[(name?.charCodeAt(0) || 0) % GRADIEN
 // ─── Stat Card ────────────────────────────────────────────────────────────────
 
 function StatCard({ label, value, icon: Icon, iconBg, glow, delay }: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     label: string; value: number; icon: any; iconBg: string; glow: string; delay: number;
 }) {
     return (
@@ -95,10 +96,11 @@ function SpecCardSkeleton({ delay = 0 }: { delay?: number }) {
 
 // ─── Specialization Card ──────────────────────────────────────────────────────
 
-function SpecCard({ spec, onEdit, onToggle }: {
+function SpecCard({ spec, onEdit, onToggle, actionLoading }: {
     spec: Specialization;
     onEdit: () => void;
     onToggle: () => void;
+    actionLoading: string | null;
 }) {
     const grad = getGrad(spec.specialization_name);
     const initial = spec.specialization_name?.charAt(0)?.toUpperCase() || "S";
@@ -139,22 +141,24 @@ function SpecCard({ spec, onEdit, onToggle }: {
                         <Tooltip content="Edit" side="top">
                             <button
                                 onClick={e => { e.stopPropagation(); onEdit(); }}
-                                className="h-7 w-7 rounded-lg bg-background/90 border border-border/60 shadow-sm flex items-center justify-center text-muted-foreground hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-all"
+                                disabled={actionLoading !== null}
+                                className="h-7 w-7 rounded-lg bg-background/90 border border-border/60 shadow-sm flex items-center justify-center text-muted-foreground hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-all disabled:opacity-50"
                             >
-                                <Pencil className="h-3.5 w-3.5" />
+                                {actionLoading === `${spec.specialization_id}-edit` ? <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" /> : <Pencil className="h-3.5 w-3.5" />}
                             </button>
                         </Tooltip>
                         <Tooltip content={spec.is_active ? "Deactivate" : "Activate"} side="top">
                             <button
                                 onClick={e => { e.stopPropagation(); onToggle(); }}
+                                disabled={actionLoading !== null}
                                 className={cn(
-                                    "h-7 w-7 rounded-lg border shadow-sm flex items-center justify-center transition-all",
+                                    "h-7 w-7 rounded-lg border shadow-sm flex items-center justify-center transition-all disabled:opacity-50",
                                     spec.is_active
                                         ? "bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-600 hover:bg-rose-100"
                                         : "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-600 hover:bg-emerald-100"
                                 )}
                             >
-                                {spec.is_active ? <UserX className="h-3.5 w-3.5" /> : <UserCheck className="h-3.5 w-3.5" />}
+                                {actionLoading === `${spec.specialization_id}-toggle` ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : (spec.is_active ? <UserX className="h-3.5 w-3.5" /> : <UserCheck className="h-3.5 w-3.5" />)}
                             </button>
                         </Tooltip>
                     </div>
@@ -200,31 +204,16 @@ function SpecCard({ spec, onEdit, onToggle }: {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function SpecializationManager() {
-    const { user }     = useAuth();
     const { addToast } = useToast();
 
-    const [specializations, setSpecializations] = useState<Specialization[]>([]);
-    const [isLoading,       setIsLoading]       = useState(false);
+    const { data: specializations = [], isLoading, isValidating: isRefreshing, mutate: fetchData } = useApi<Specialization[]>("/master-data/specializations");
     const [searchQuery,     setSearchQuery]     = useState("");
     const [isModalOpen,     setIsModalOpen]     = useState(false);
     const [formData,        setFormData]        = useState({ id: 0, name: "", description: "" });
     const [isEditing,       setIsEditing]       = useState(false);
     const [isSubmitting,    setIsSubmitting]    = useState(false);
     const [deleteState,     setDeleteState]     = useState<{ open: boolean; id: number; name: string }>({ open: false, id: 0, name: "" });
-
-    const fetchData = async () => {
-        setIsLoading(true);
-        try {
-            const res = await api.get<Specialization[]>("/master-data/specializations");
-            setSpecializations(res);
-        } catch {
-            addToast("Failed to fetch specializations", "error");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    useEffect(() => { fetchData(); }, []);
+    const [actionLoading,   setActionLoading]   = useState<string | null>(null);
 
     const filteredSpecs = useMemo(() => {
         const q = searchQuery.toLowerCase();
@@ -234,7 +223,21 @@ export function SpecializationManager() {
     }, [specializations, searchQuery]);
 
     const openAdd = () => { setIsEditing(false); setFormData({ id: 0, name: "", description: "" }); setIsModalOpen(true); };
-    const openEdit = (s: Specialization) => { setIsEditing(true); setFormData({ id: s.specialization_id, name: s.specialization_name, description: s.description || "" }); setIsModalOpen(true); };
+    const openEdit = async (s: Specialization) => { 
+        setActionLoading(`${s.specialization_id}-edit`);
+        await new Promise(r => setTimeout(r, 400));
+        setIsEditing(true); 
+        setFormData({ id: s.specialization_id, name: s.specialization_name, description: s.description || "" }); 
+        setIsModalOpen(true); 
+        setActionLoading(null);
+    };
+
+    const openToggle = async (s: Specialization) => {
+        setActionLoading(`${s.specialization_id}-toggle`);
+        await new Promise(r => setTimeout(r, 400));
+        setDeleteState({ open: true, id: s.specialization_id, name: s.specialization_name });
+        setActionLoading(null);
+    };
 
     const handleSubmit = async () => {
         if (!formData.name.trim()) { addToast("Name is required", "error"); return; }
@@ -297,11 +300,11 @@ export function SpecializationManager() {
                     <div className="flex items-center gap-2 self-start">
                         <Tooltip content="Refresh data">
                             <button
-                                onClick={fetchData}
-                                disabled={isLoading}
+                                onClick={() => fetchData()}
+                                disabled={isLoading || isRefreshing}
                                 className="inline-flex items-center gap-2 h-9 px-4 rounded-xl border border-border/60 bg-background text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 disabled:opacity-50 transition-all"
                             >
-                                <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} />
+                                <RefreshCw className={cn("h-3.5 w-3.5", (isLoading || isRefreshing) && "animate-spin")} />
                                 Refresh
                             </button>
                         </Tooltip>
@@ -385,7 +388,8 @@ export function SpecializationManager() {
                                     key={spec.specialization_id}
                                     spec={spec}
                                     onEdit={() => openEdit(spec)}
-                                    onToggle={() => setDeleteState({ open: true, id: spec.specialization_id, name: spec.specialization_name })}
+                                    onToggle={() => openToggle(spec)}
+                                    actionLoading={actionLoading}
                                 />
                             ))}
                         </AnimatePresence>

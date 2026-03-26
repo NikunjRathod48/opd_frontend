@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -17,28 +17,13 @@ import { ImageUpload } from "@/components/ui/image-upload";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
-import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useApi } from "@/hooks/use-api";
 import { motion, AnimatePresence } from "framer-motion";
-
-const container = {
-    hidden: { opacity: 0 },
-    show: {
-        opacity: 1,
-        transition: {
-            staggerChildren: 0.1
-        }
-    }
-};
-
-const item = {
-    hidden: { opacity: 0, y: 20 },
-    show: { opacity: 1, y: 0, transition: { stiffness: 300, damping: 24 } }
-};
 
 const adminSchema = z.object({
     name: z.string().min(1, "Full Name is required"),
-    email: z.string().email("Invalid email address"),
+    email: z.email("Invalid email address"),
     phoneno: z.string()
         .length(10, "Phone number must be exactly 10 digits")
         .regex(/^\d+$/, "Phone number must be numeric"),
@@ -50,7 +35,7 @@ const adminSchema = z.object({
         }, "Password must be 6-12 chars, include 1 uppercase, 1 lowercase, 1 number, and 1 special char"),
     hospitalgroupid: z.string().min(1, "Hospital Group is required"),
     joining_date: z.string().optional(),
-    isactive: z.boolean().default(true),
+    isactive: z.boolean(),
 });
 
 type AdminFormValues = z.infer<typeof adminSchema>;
@@ -88,6 +73,7 @@ export function GroupAdminList() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
     const [isViewOpen, setIsViewOpen] = useState(false);
+    const [actionLoading, setActionLoading] = useState<string | null>(null);
 
     interface AdminUser extends User {
         profileImage?: string;
@@ -100,7 +86,7 @@ export function GroupAdminList() {
 
     // Form State
     const form = useForm<AdminFormValues>({
-        resolver: zodResolver(adminSchema) as any,
+        resolver: zodResolver(adminSchema),
         defaultValues: {
             name: "",
             email: "",
@@ -115,68 +101,49 @@ export function GroupAdminList() {
     const [profileImage, setProfileImage] = useState<File | string | null>(null);
 
     // Data States
-    const [fetchedGroups, setFetchedGroups] = useState(hospitalGroups);
-    const [fetchedAdmins, setFetchedAdmins] = useState<AdminUser[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: rawGroups = [], isLoading: isGroupsLoading, isValidating: isGroupsValidating, mutate: mutateGroups } = useApi<any[]>("/hospital-groups");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: rawAdmins = [], isLoading: isAdminsLoading, isValidating: isAdminsValidating, mutate: mutateAdmins } = useApi<any[]>("/hospital-groups/admins");
+    const isLoading = isGroupsLoading || isAdminsLoading;
+    const isRefreshing = isGroupsValidating || isAdminsValidating;
 
-    useEffect(() => {
-        loadData();
-    }, []);
+    // Derived States
+    const fetchedGroups = useMemo(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return rawGroups.map((g: any) => ({
+            hospitalgroupid: String(g.hospital_group_id),
+            groupname: g.group_name,
+            contactemail: g.contact_email || "",
+            contactno: g.contact_no || "",
+            address: g.address || ""
+        }));
+    }, [rawGroups]);
 
-    const loadData = async () => {
-            setIsLoading(true);
-            try {
-                const token = JSON.parse(localStorage.getItem("medcore_user") || "{}").access_token;
-                if (!token) return;
+    const fetchedAdmins = useMemo(() => {
+        return rawAdmins
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .filter((item: any) => item.users_employees_user_idTousers)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            .map((item: any) => ({
+                userid: String(item.users_employees_user_idTousers.user_id),
+                name: item.users_employees_user_idTousers.full_name,
+                email: item.users_employees_user_idTousers.email,
+                phoneno: item.users_employees_user_idTousers.phone_number,
+                role: 'GroupAdmin' as const,
+                hospitalgroupid: String(item.hospital_groups?.hospital_group_id || ""),
+                isactive: item.users_employees_user_idTousers.is_active,
+                profileImage: item.users_employees_user_idTousers.profile_image_url,
+                joiningDate: item.joining_date,
+                lastLoginAt: item.users_employees_user_idTousers.last_login_at,
+                employeeId: item.employee_id ? String(item.employee_id) : "N/A"
+            }));
+    }, [rawAdmins]);
 
-                const headers = { "Authorization": `Bearer ${token}` };
-                const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://opd-backend-hntt.onrender.com";
-
-                // Fetch Groups and Admins in parallel
-                const [groupsRes, adminsRes] = await Promise.all([
-                    fetch(`${apiUrl}/hospital-groups`, { headers }),
-                    fetch(`${apiUrl}/hospital-groups/admins`, { headers })
-                ]);
-
-                if (groupsRes.ok) {
-                    const groupsData = await groupsRes.json();
-                    const mappedGroups = groupsData.map((g: any) => ({
-                        hospitalgroupid: String(g.hospital_group_id),
-                        groupname: g.group_name,
-                        contactemail: g.contact_email || "",
-                        contactno: g.contact_no || "",
-                        address: g.address || ""
-                    }));
-                    setFetchedGroups(mappedGroups);
-                }
-
-                if (adminsRes.ok) {
-                    const adminsData = await adminsRes.json();
-                    const mappedAdmins: AdminUser[] = adminsData
-                        .filter((item: any) => item.users_employees_user_idTousers)
-                        .map((item: any) => ({
-                            userid: String(item.users_employees_user_idTousers.user_id),
-                            name: item.users_employees_user_idTousers.full_name,
-                            email: item.users_employees_user_idTousers.email,
-                            phoneno: item.users_employees_user_idTousers.phone_number,
-                            role: 'GroupAdmin',
-                            hospitalgroupid: String(item.hospital_groups?.hospital_group_id || ""),
-                            isactive: item.users_employees_user_idTousers.is_active,
-                            profileImage: item.users_employees_user_idTousers.profile_image_url,
-                            joiningDate: item.joining_date,
-                            lastLoginAt: item.users_employees_user_idTousers.last_login_at,
-                            employeeId: item.employee_id ? String(item.employee_id) : "N/A"
-                        }));
-                    setFetchedAdmins(mappedAdmins);
-                }
-
-            } catch (error) {
-                console.error("Failed to load initial data", error);
-                addToast("Failed to load data", "error");
-            } finally {
-                setIsLoading(false);
-            }
-        };
+    const loadData = () => {
+        mutateGroups();
+        mutateAdmins();
+    };
 
     // Comprehensive Filter Logic
     const filteredAdmins = fetchedAdmins.filter(a => {
@@ -257,7 +224,9 @@ export function GroupAdminList() {
         setIsModalOpen(true);
     };
 
-    const handleOpenEdit = (admin: AdminUser) => {
+    const handleOpenEdit = async (admin: AdminUser) => {
+        setActionLoading(`${admin.userid}-edit`);
+        await new Promise(r => setTimeout(r, 400));
         setSelectedAdmin(admin);
         form.reset({
             name: admin.name,
@@ -271,11 +240,15 @@ export function GroupAdminList() {
         setProfileImage(admin.profileImage || null);
         setModalMode('edit');
         setIsModalOpen(true);
+        setActionLoading(null);
     };
 
-    const handleOpenView = (admin: AdminUser) => {
+    const handleOpenView = async (admin: AdminUser) => {
+        setActionLoading(`${admin.userid}-view`);
+        await new Promise(r => setTimeout(r, 400));
         setSelectedAdmin(admin);
         setIsViewOpen(true);
+        setActionLoading(null);
     };
 
     const applyFilters = () => {
@@ -337,6 +310,7 @@ export function GroupAdminList() {
     };
 
     const handleStatusToggle = async (adminId: string, currentStatus: boolean) => {
+        setActionLoading(`${adminId}-status`);
         try {
             const token = JSON.parse(localStorage.getItem("medcore_user") || "{}").access_token;
             const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "https://opd-backend-hntt.onrender.com"}/hospital-groups/admin/${adminId}/status`, {
@@ -350,12 +324,14 @@ export function GroupAdminList() {
 
             if (res.ok) {
                 addToast(`Admin access ${!currentStatus ? 'restored' : 'revoked'}`, "success");
-                setFetchedAdmins(prev => prev.map(a => a.userid === adminId ? { ...a, isactive: !currentStatus } : a));
+                mutateAdmins();
             } else {
                 throw new Error("Failed to update status");
             }
         } catch (error) {
             addToast("Failed to update status", "error");
+        } finally {
+            setActionLoading(null);
         }
     };
 
@@ -419,9 +395,9 @@ export function GroupAdminList() {
             handleCancel();
             window.location.reload();
 
-        } catch (error: any) {
+        } catch (error: unknown) {
             console.error(error);
-            addToast(error.message || "Failed to save Group Admin", "error");
+            addToast((error as Error).message || "Failed to save Group Admin", "error");
         }
     };
 
@@ -455,11 +431,11 @@ export function GroupAdminList() {
                     <Button
                         variant="outline"
                         size="icon"
-                        onClick={loadData}
-                        disabled={isLoading}
+                        onClick={() => loadData()}
+                        disabled={isLoading || isRefreshing}
                         className="h-11 w-11 rounded-xl"
                     >
-                        <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+                        <RefreshCw className={cn("h-4 w-4", (isLoading || isRefreshing) && "animate-spin")} />
                     </Button>
                     <Button
                         onClick={handleOpenAdd}
@@ -598,18 +574,18 @@ export function GroupAdminList() {
                                 {/* Quick actions – always visible */}
                                 <div className="absolute top-3 right-3 flex gap-1.5 z-10">
                                     <Tooltip content="View Profile">
-                                        <button onClick={() => handleOpenView(admin)} className="h-8 w-8 rounded-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-violet-600 hover:border-violet-300 transition-all">
-                                            <Eye className="h-3.5 w-3.5" />
+                                        <button onClick={() => handleOpenView(admin)} disabled={actionLoading !== null} className="h-8 w-8 rounded-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-violet-600 hover:border-violet-300 transition-all disabled:opacity-50">
+                                            {actionLoading === `${admin.userid}-view` ? <Loader2 className="h-4 w-4 animate-spin text-violet-500" /> : <Eye className="h-3.5 w-3.5" />}
                                         </button>
                                     </Tooltip>
                                     <Tooltip content="Edit">
-                                        <button onClick={() => handleOpenEdit(admin)} className="h-8 w-8 rounded-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 transition-all">
-                                            <Pencil className="h-3.5 w-3.5" />
+                                        <button onClick={() => handleOpenEdit(admin)} disabled={actionLoading !== null} className="h-8 w-8 rounded-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 transition-all disabled:opacity-50">
+                                            {actionLoading === `${admin.userid}-edit` ? <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> : <Pencil className="h-3.5 w-3.5" />}
                                         </button>
                                     </Tooltip>
                                     <Tooltip content={admin.isactive ? "Deactivate" : "Activate"}>
-                                        <button onClick={() => handleStatusToggle(admin.userid, admin.isactive || false)} className={cn("h-8 w-8 rounded-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 flex items-center justify-center transition-all", admin.isactive ? "text-slate-400 hover:text-red-500 hover:border-red-200" : "text-slate-400 hover:text-emerald-600 hover:border-emerald-200")}>
-                                            {admin.isactive ? <Trash2 className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+                                        <button onClick={() => handleStatusToggle(admin.userid, admin.isactive || false)} disabled={actionLoading !== null} className={cn("h-8 w-8 rounded-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 flex items-center justify-center transition-all disabled:opacity-50", admin.isactive ? "text-slate-400 hover:text-red-500 hover:border-red-200" : "text-slate-400 hover:text-emerald-600 hover:border-emerald-200")}>
+                                            {actionLoading === `${admin.userid}-status` ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : (admin.isactive ? <Trash2 className="h-3.5 w-3.5" /> : <CheckCircle2 className="h-3.5 w-3.5" />)}
                                         </button>
                                     </Tooltip>
                                 </div>

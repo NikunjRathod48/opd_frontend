@@ -6,6 +6,7 @@ import { ToastProvider } from "@/components/ui/toast";
 import { AuthProvider } from "@/context/auth-context";
 import { DataProvider } from "@/context/data-context";
 import { SocketProvider } from "@/context/socket-context";
+import NextTopLoader from "nextjs-toploader";
 
 const fontSans = Plus_Jakarta_Sans({
   subsets: ["latin"],
@@ -25,6 +26,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={fontSans.className}>
+        <NextTopLoader color="#4F46E5" showSpinner={false} shadow="0 0 10px #4F46E5,0 0 5px #4F46E5" />
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

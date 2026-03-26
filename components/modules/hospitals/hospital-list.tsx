@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { useData } from "@/context/data-context";
 import { useAuth, UserRole } from "@/context/auth-context";
 import { RoleGuard } from "@/components/auth/role-guard";
+import { useApi } from "@/hooks/use-api";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, Plus, Building2, MapPin, Phone, Activity, Eye, X, ArrowLeft, ArrowRight, Pencil, Bed, User as UserIcon, Mail, Clock, Calendar, Check, FileText, Hash, Filter, ChevronDown, ChevronUp, RotateCcw, Shield, RefreshCw, Building, AlertCircle } from "lucide-react";
+import { Search, Plus, Building2, MapPin, Phone, Activity, Eye, X, ArrowLeft, ArrowRight, Pencil, Bed, User as UserIcon, Mail, Clock, Calendar, Check, FileText, Hash, Filter, ChevronDown, ChevronUp, RotateCcw, Shield, RefreshCw, Building, AlertCircle, Loader2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter, SheetClose } from "@/components/ui/sheet";
 import { Label } from "@/components/ui/label";
@@ -18,7 +19,6 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { useToast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { AddHospitalModal } from "./add-hospital-modal";
-import { api } from "@/lib/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
@@ -52,8 +52,7 @@ export function HospitalList({ allowedRoles = ['SuperAdmin', 'GroupAdmin'], read
     const { hospitalGroups, admins } = useData();
 
     // Local State
-    const [hospitals, setHospitals] = useState<any[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const { data: hospitals = [], isLoading, isValidating: isRefreshing, mutate: fetchHospitals } = useApi<any[]>('/hospitals');
 
     // Filter Logic States
     const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -87,27 +86,13 @@ export function HospitalList({ allowedRoles = ['SuperAdmin', 'GroupAdmin'], read
     const [viewingAdmin, setViewingAdmin] = useState<any | null>(null);
     const [isAdminViewOpen, setIsAdminViewOpen] = useState(false);
 
+    // Action Loading State
+    const [actionLoading, setActionLoading] = useState<string | null>(null);
+
     const isSuperAdmin = user?.role === 'SuperAdmin';
     const isGroupAdmin = user?.role === 'GroupAdmin';
     const canAdd = !readOnly && isGroupAdmin;
     const canEdit = !readOnly && isGroupAdmin;
-
-    // Fetch Hospitals
-    const fetchHospitals = async () => {
-        setIsLoading(true);
-        try {
-            const data = await api.get<any[]>('/hospitals');
-            setHospitals(data);
-        } catch (error) {
-            console.error("Failed to fetch hospitals", error);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        fetchHospitals();
-    }, []);
 
     const groupName = groupId ? hospitalGroups.find(g => String(g.hospitalgroupid) === String(groupId))?.groupname : null;
 
@@ -152,9 +137,21 @@ export function HospitalList({ allowedRoles = ['SuperAdmin', 'GroupAdmin'], read
     const uniqueEmails = Array.from(new Set(hospitals.map(h => h.contact_email).filter(Boolean))).map(e => ({ label: e as string, value: e as string }));
     const uniquePhones = Array.from(new Set(hospitals.flatMap(h => [h.receptionist_contact, h.contact_phone]).filter(Boolean))).map(p => ({ label: p as string, value: p as string }));
 
-    const handleEdit = (hospital: any) => {
+    const handleEdit = async (hospital: any) => {
+        const hospitalId = hospital.hospital_id || hospital.hospitalid;
+        setActionLoading(`${hospitalId}-edit`);
+        await new Promise(r => setTimeout(r, 400));
         setEditingHospital(hospital);
         setIsAddModalOpen(true);
+        setActionLoading(null);
+    };
+
+    const handleView = async (hospital: any) => {
+        const hospitalId = hospital.hospital_id || hospital.hospitalid;
+        setActionLoading(`${hospitalId}-view`);
+        await new Promise(r => setTimeout(r, 400));
+        setViewingHospital(hospital);
+        setActionLoading(null);
     };
 
     const handleAdd = () => {
@@ -243,8 +240,8 @@ export function HospitalList({ allowedRoles = ['SuperAdmin', 'GroupAdmin'], read
                             <Filter className="h-4 w-4" /> Filters
                             {hasActiveFilters && <span className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-blue-500 text-white text-[10px] flex items-center justify-center font-bold">!</span>}
                         </Button>
-                        <Button variant="outline" size="icon" onClick={fetchHospitals} disabled={isLoading} className="h-11 w-11 rounded-xl">
-                            <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin text-blue-600 dark:text-blue-400")} />
+                        <Button variant="outline" size="icon" onClick={() => fetchHospitals()} disabled={isLoading || isRefreshing} className="h-11 w-11 rounded-xl">
+                            <RefreshCw className={cn("h-4 w-4", (isLoading || isRefreshing) && "animate-spin text-blue-600 dark:text-blue-400")} />
                         </Button>
                         {canAdd && (
                             <Button onClick={handleAdd} className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 rounded-xl px-6 h-11 text-white shadow-lg shadow-blue-500/20 transition-all hover:scale-105 active:scale-95 font-semibold">
@@ -441,19 +438,21 @@ export function HospitalList({ allowedRoles = ['SuperAdmin', 'GroupAdmin'], read
                                             <div className="absolute top-4 right-3 flex gap-1.5 z-10">
                                                 <Tooltip content="View Details">
                                                     <button
-                                                        onClick={() => setViewingHospital(hospital)}
-                                                        className="h-8 w-8 rounded-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-blue-600 hover:border-blue-300 transition-all"
+                                                        onClick={() => handleView(hospital)}
+                                                        disabled={actionLoading !== null}
+                                                        className="h-8 w-8 rounded-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-blue-600 hover:border-blue-300 transition-all disabled:opacity-50"
                                                     >
-                                                        <Eye className="h-3.5 w-3.5" />
+                                                        {actionLoading === `${hospitalId}-view` ? <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" /> : <Eye className="h-3.5 w-3.5" />}
                                                     </button>
                                                 </Tooltip>
                                                 {canEdit && (
                                                     <Tooltip content="Edit Branch">
                                                         <button
                                                             onClick={() => handleEdit(hospital)}
-                                                            className="h-8 w-8 rounded-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 transition-all"
+                                                            disabled={actionLoading !== null}
+                                                            className="h-8 w-8 rounded-full bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 transition-all disabled:opacity-50"
                                                         >
-                                                            <Pencil className="h-3.5 w-3.5" />
+                                                            {actionLoading === `${hospitalId}-edit` ? <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" /> : <Pencil className="h-3.5 w-3.5" />}
                                                         </button>
                                                     </Tooltip>
                                                 )}

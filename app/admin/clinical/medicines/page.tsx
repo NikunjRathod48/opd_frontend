@@ -10,12 +10,12 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { DialogFooter, Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DialogFooter, Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip } from "@/components/ui/tooltip";
-import { useAuth } from "@/context/auth-context";
 import { Search, PackagePlus, Loader2, X, Pill } from "lucide-react";
+import { useApi } from "@/hooks/use-api";
+import { useAuth } from "@/context/auth-context";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { motion } from "framer-motion";
@@ -31,59 +31,44 @@ export default function MedicinesPage() {
     const isHospitalAdmin = user?.role === 'HospitalAdmin';
     const hospitalId = user?.hospitalid;
 
-    const [medicines, setMedicines] = useState<Medicine[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-
     // Catalog State for Hospital Admin
     const [isCatalogOpen, setIsCatalogOpen] = useState(false);
     const [catalogMedicines, setCatalogMedicines] = useState<Medicine[]>([]);
     const [catalogSearch, setCatalogSearch] = useState("");
     const [catalogLoading, setCatalogLoading] = useState(false);
 
+    // Initial Fetch with SWR
+    const apiUrl = user ? (isHospitalAdmin && hospitalId ? `/master-data/medicines?hospital_id=${hospitalId}` : `/master-data/medicines`) : null;
+    const { data: rawMedicines = [], isLoading, mutate: mutateMed } = useApi<Medicine[]>(apiUrl);
+
+    const medicines = useMemo(() => {
+        if (isHospitalAdmin) {
+            return rawMedicines.filter((m: Medicine & { is_linked?: boolean }) => m.is_linked);
+        }
+        return rawMedicines;
+    }, [rawMedicines, isHospitalAdmin]);
+
     // Synthesized Categories from Medicine Types
-    const [categories, setCategories] = useState<MedicineCategory[]>([]);
+    const categories = useMemo(() => {
+        const types = Array.from(new Set(medicines.map(m => m.medicine_type)));
+        const cats = types.map((type, index) => ({
+            id: index + 1,
+            name: type
+        }));
+        if (cats.length === 0) {
+            cats.push({ id: 1, name: "General" });
+        }
+        return cats;
+    }, [medicines]);
+
     const [selectedCategory, setSelectedCategory] = useState<MedicineCategory | null>(null);
 
-    // Initial Fetch
-    const fetchData = async () => {
-        setIsLoading(true);
-        try {
-            let data = await clinicalService.getMedicines(isHospitalAdmin && hospitalId ? Number(hospitalId) : undefined);
-
-            // For Hospital Admins, only show items they have explicitly linked
-            if (isHospitalAdmin) {
-                // The backend attachs is_linked to items returned in the hospital context
-                data = data.filter((m: any) => m.is_linked);
-            }
-
-            setMedicines(data);
-
-            // Extract unique types to form categories
-            const types = Array.from(new Set(data.map(m => m.medicine_type)));
-            const cats = types.map((type, index) => ({
-                id: index + 1,
-                name: type
-            }));
-
-            if (cats.length === 0) {
-                cats.push({ id: 1, name: "General" });
-            }
-
-            setCategories(cats);
-            if (cats.length > 0 && !selectedCategory) {
-                setSelectedCategory(cats[0]);
-            }
-        } catch (error) {
-            console.error("Failed to load medicines", error);
-            addToast("Failed to load medicines", "error");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
+    // Auto select first category
     useEffect(() => {
-        if (user) fetchData();
-    }, [user, isHospitalAdmin, hospitalId]);
+        if (categories.length > 0 && (!selectedCategory || !categories.find(c => c.name === selectedCategory.name))) {
+            setSelectedCategory(categories[0]);
+        }
+    }, [categories, selectedCategory]);
 
     // --- Hospital Admin Catalog Actions ---
     const fetchCatalogMedicines = async () => {
@@ -94,7 +79,7 @@ export default function MedicinesPage() {
             // Filter out ones already added to this hospital
             const existingIds = new Set(medicines.map(m => m.medicine_id));
             setCatalogMedicines(data.filter(m => !existingIds.has(m.medicine_id)));
-        } catch (error) {
+        } catch {
             addToast("Failed to load catalog", "error");
         } finally {
             setCatalogLoading(false);
@@ -110,38 +95,11 @@ export default function MedicinesPage() {
                 stock_quantity: 0
             }, Number(hospitalId));
 
-            const fullMedicine = { ...medicine, is_linked: true, is_active_in_hospital: true, price: medicine.price || 0, stock_quantity: 0 };
-            setMedicines(prev => [...prev, fullMedicine]);
+            mutateMed(); // Automatically re-fetches and applies derived state
             setCatalogMedicines(prev => prev.filter(m => m.medicine_id !== medicine.medicine_id));
             addToast(`${medicine.medicine_name} added to your inventory`, "success");
             setIsCatalogOpen(false); // Auto-close model after success
-
-            // Update categories to include the new medicine type
-            setCategories(prev => {
-                const existing = prev.find(c => c.name === medicine.medicine_type);
-                if (!existing) {
-                    const newCat = { id: prev.length + 1, name: medicine.medicine_type };
-                    // If no category was selected or only 'General' dummy was there
-                    if (!selectedCategory || prev.length === 0 || (prev.length === 1 && prev[0].name === "General")) {
-                        setSelectedCategory(newCat);
-                    }
-                    // Filter out the "General" dummy if we are adding real ones
-                    const nonDummy = prev.filter(c => c.name !== "General");
-                    return [...nonDummy, newCat];
-                } else if (!selectedCategory || (categories.length === 1 && categories[0].name === "General")) {
-                    setSelectedCategory(existing);
-                }
-                return prev;
-            });
-
-            // Re-fetch data silently in background to ensure strict backend consistency
-            clinicalService.getMedicines(Number(hospitalId)).then(data => {
-                if (isHospitalAdmin) {
-                    setMedicines(data.filter((m: any) => m.is_linked));
-                }
-            }).catch(console.error);
-
-        } catch (error) {
+        } catch {
             addToast("Failed to link medicine", "error");
         }
     };
@@ -150,49 +108,20 @@ export default function MedicinesPage() {
     const handleAddItem = async (data: Partial<Medicine>) => {
         try {
             const newMed = await clinicalService.createMedicine(data);
-            setMedicines(prev => [...prev, newMed]);
-
-            // Update categories if new type
-            if (!categories.find(c => c.name === newMed.medicine_type)) {
-                const newCat = { id: categories.length + 1, name: newMed.medicine_type };
-                setCategories(prev => [...prev, newCat]);
-                if (categories.length === 0) setSelectedCategory(newCat);
-            }
-
+            mutateMed();
             addToast(`Medicine ${newMed.medicine_name} added`, "success");
-        } catch (e: any) {
-            addToast(e.message || "Failed to add medicine", "error");
+        } catch (e: unknown) {
+            addToast((e as Error).message || "Failed to add medicine", "error");
         }
     };
 
     const handleEditItem = async (item: Medicine, data: Partial<Medicine>) => {
         try {
-            const updated = await clinicalService.updateMedicine(item.medicine_id, data, isHospitalAdmin ? Number(hospitalId) : undefined);
-
-            setMedicines(prev => prev.map(m => {
-                if (m.medicine_id === item.medicine_id) {
-                    if (isHospitalAdmin) {
-                        return {
-                            ...m,
-                            price: data.price !== undefined ? data.price : m.price,
-                            stock_quantity: (data as any).stock_quantity !== undefined ? (data as any).stock_quantity : (m as any).stock_quantity,
-                            is_active_in_hospital: data.is_active !== undefined ? data.is_active : (m as any).is_active_in_hospital
-                        };
-                    }
-                    return { ...m, ...data, ...updated };
-                }
-                return m;
-            }));
-
-            // Update categories without touching the response object safely
-            const newType = data.medicine_type || item.medicine_type;
-            if (newType && !categories.find(c => c.name === newType)) {
-                setCategories(prev => [...prev, { id: prev.length + 1, name: newType }]);
-            }
-
+            await clinicalService.updateMedicine(item.medicine_id, data, isHospitalAdmin ? Number(hospitalId) : undefined);
+            mutateMed();
             addToast(`Medicine updated`, "success");
-        } catch (e: any) {
-            addToast(e.message || "Failed to update medicine", "error");
+        } catch (e: unknown) {
+            addToast((e as Error).message || "Failed to update medicine", "error");
         }
     };
 
@@ -219,8 +148,8 @@ export default function MedicinesPage() {
             <div className="mt-3 pt-3 border-t border-dashed flex justify-between items-center">
                 <div className="flex flex-col">
                     {isHospitalAdmin && <span className="text-xs text-muted-foreground block mb-1">Stock: {item.stock_quantity || 0}</span>}
-                    {isHospitalAdmin && (item as any).base_price !== undefined ? (
-                        <span className="text-[10px] text-muted-foreground line-through">Base: ₹{(item as any).base_price}</span>
+                    {isHospitalAdmin && (item as Medicine & { base_price?: number }).base_price !== undefined ? (
+                        <span className="text-[10px] text-muted-foreground line-through">Base: ₹{(item as Medicine & { base_price?: number }).base_price}</span>
                     ) : (
                         <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Price</span>
                     )}
@@ -544,7 +473,7 @@ function MedicineForm({
     initialData: Partial<Medicine>,
     category: MedicineCategory,
     onClose: () => void,
-    onSubmit: (data: any) => Promise<void>,
+    onSubmit: (data: Partial<Medicine>) => Promise<void>,
     isHospitalAdmin: boolean
 }) {
     // Form state
@@ -601,8 +530,8 @@ function MedicineForm({
                 <div className="space-y-2">
                     <Label>{isHospitalAdmin ? "Hospital Price (₹)" : "Base Price (₹)"}</Label>
                     <Input type="number" value={formData.price} onChange={e => setFormData({ ...formData, price: Number(e.target.value) })} placeholder="0.00" />
-                    {isHospitalAdmin && (initialData as any)?.base_price !== undefined && (
-                        <p className="text-xs text-muted-foreground mt-1">Master Price: ₹{(initialData as any).base_price}</p>
+                    {isHospitalAdmin && (initialData as Partial<Medicine> & { base_price?: number })?.base_price !== undefined && (
+                        <p className="text-xs text-muted-foreground mt-1">Master Price: ₹{(initialData as Partial<Medicine> & { base_price?: number }).base_price}</p>
                     )}
                 </div>
             </div>

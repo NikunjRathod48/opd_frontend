@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Plus, Search, Tag, Pencil, Trash2, Stethoscope, IndianRupee, Layers, MoreVertical, Link as LinkIcon, AlertCircle, CheckCircle2, X, Loader2, ChevronRight } from "lucide-react";
+import { Plus, Search, Tag, Pencil, Trash2, Stethoscope, IndianRupee, Layers, MoreVertical, AlertCircle, CheckCircle2, X, Loader2, ChevronRight } from "lucide-react";
 import { useToast } from "@/components/ui/toast";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -15,11 +15,13 @@ import { cn } from "@/lib/utils";
 import { DeleteConfirmationDialog } from "@/components/ui/delete-confirmation-dialog";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/auth-context";
+import { useApi } from "@/hooks/use-api";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { motion } from "framer-motion";
+import { Department } from "@/types/clinical";
 
 // --- Types ---
 interface TreatmentType {
@@ -54,10 +56,16 @@ export function TreatmentTypeList() {
     const hospitalId = user?.hospitalid;
 
     // -- State --
-    const [treatments, setTreatments] = useState<TreatmentType[]>([]);
-    const [procedures, setProcedures] = useState<Procedure[]>([]);
-    const [departments, setDepartments] = useState<any[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const queryStr = isHospitalAdmin && hospitalId ? `?hospital_id=${hospitalId}` : '';
+    const treatmentUrl = user ? `/master-data/treatments${queryStr}` : null;
+    const procedureUrl = user ? `/master-data/procedures${queryStr}` : null;
+    const departmentUrl = user ? `/master-data/departments${queryStr}` : null;
+
+    const { data: treatments = [], isLoading: isTLoad, mutate: mutateT } = useApi<TreatmentType[]>(treatmentUrl);
+    const { data: procedures = [], isLoading: isPLoad, mutate: mutateP } = useApi<Procedure[]>(procedureUrl);
+    const { data: departments = [], isLoading: isDLoad } = useApi<Department[]>(departmentUrl);
+    const isLoading = isTLoad || isPLoad || isDLoad;
+
     const [searchQuery, setSearchQuery] = useState("");
 
     // Modal State
@@ -100,37 +108,6 @@ export function TreatmentTypeList() {
         price: "", // Initialize as empty for placeholder
         isSurgical: false
     });
-
-    // -- Fetch Data --
-    const fetchData = async () => {
-        setIsLoading(true);
-        try {
-            const query = isHospitalAdmin && hospitalId ? `?hospital_id=${hospitalId}` : '';
-
-            // 1. Fetch Treatments (Categories)
-            const treatmentsRes = await api.get<any[]>(`/master-data/treatments${query}`);
-
-            // 2. Fetch Procedures (Services)
-            const proceduresRes = await api.get<any[]>(`/master-data/procedures${query}`);
-
-            // 3. Fetch Departments
-            const deptsRes = await api.get<any[]>(`/master-data/departments${query}`);
-
-            setTreatments(treatmentsRes);
-            setProcedures(proceduresRes);
-            setDepartments(deptsRes);
-
-        } catch (error) {
-            console.error("Failed to fetch OPD data", error);
-            addToast("Failed to load catalog", "error");
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        if (user) fetchData();
-    }, [user, isHospitalAdmin, hospitalId]);
 
     // -- Derived Data --
     const organizedData = useMemo(() => {
@@ -177,12 +154,21 @@ export function TreatmentTypeList() {
 
         setIsSubmitting(true);
         try {
-            const payload: any = {
+            const payload: {
+                is_active: boolean;
+                treatment_name?: string;
+                treatment_code?: string;
+                department_id?: number;
+                procedure_name?: string;
+                procedure_code?: string;
+                treatment_type_id?: number;
+                is_surgical?: boolean;
+                price?: number;
+            } = {
                 is_active: true
             };
 
             let endpoint = "";
-            let method = modalMode === 'add' ? 'POST' : 'PUT';
 
             if (formType === 'Category') {
                 if (!formData.departmentId) return addToast("Department is required", "error");
@@ -207,7 +193,8 @@ export function TreatmentTypeList() {
 
             addToast(`${formType} ${modalMode === 'add' ? 'created' : 'updated'} successfully`, "success");
             setIsModalOpen(false);
-            fetchData();
+            if (formType === 'Category') mutateT();
+            else mutateP();
         } catch (error) {
             console.error(error);
             addToast("Operation failed", "error");
@@ -237,7 +224,7 @@ export function TreatmentTypeList() {
 
             addToast("Price updated successfully", "success");
             setIsModalOpen(false);
-            fetchData();
+            mutateP();
         } catch (error) {
             console.error("Failed to update price", error);
             addToast("Failed to update details", "error");
@@ -268,7 +255,8 @@ export function TreatmentTypeList() {
 
             addToast("Service added to your catalog", "success");
             setIsCatalogOpen(false);
-            fetchData();
+            mutateP();
+            mutateT();
         } catch (error) {
             console.error("Failed to link service", error);
             addToast("Failed to add service", "error");
@@ -318,28 +306,31 @@ export function TreatmentTypeList() {
         setIsModalOpen(true);
     };
 
-    const openEdit = (type: 'Category' | 'Service', item: any) => {
+    const openEdit = (type: 'Category' | 'Service', item: TreatmentType | Procedure) => {
         setModalMode('edit');
         setFormType(type);
-        setEditingId(type === 'Category' ? item.treatment_type_id : item.procedure_id);
 
         if (type === 'Category') {
+            const cat = item as TreatmentType & { department_id?: number };
+            setEditingId(cat.treatment_type_id);
             setFormData({
                 parentId: "",
-                departmentId: item.department_id?.toString() || "",
-                name: item.treatment_name,
-                code: item.treatment_code,
+                departmentId: cat.department_id?.toString() || "",
+                name: cat.treatment_name || "",
+                code: cat.treatment_code || "",
                 price: "",
                 isSurgical: false
             });
         } else {
+            const proc = item as Procedure;
+            setEditingId(proc.procedure_id);
             setFormData({
-                parentId: item.treatment_type_id.toString(),
+                parentId: proc.treatment_type_id?.toString() || "",
                 departmentId: "",
-                name: item.procedure_name,
-                code: item.procedure_code,
-                price: item.price || "",
-                isSurgical: item.is_surgical
+                name: proc.procedure_name || "",
+                code: proc.procedure_code || "",
+                price: proc.price || "",
+                isSurgical: proc.is_surgical || false
             });
         }
         setIsModalOpen(true);
@@ -350,7 +341,7 @@ export function TreatmentTypeList() {
         setCatalogLoading(true);
         try {
             // Fetch ALL master procedures without hospital filter
-            const masterProcedures = await api.get<any[]>(`/master-data/procedures`);
+            const masterProcedures = await api.get<Procedure[]>(`/master-data/procedures`);
             setCatalogProcedures(masterProcedures);
         } catch (error) {
             console.error("Failed to load master catalog", error);
@@ -380,7 +371,7 @@ export function TreatmentTypeList() {
                 const endpoint = isCategory ? 'treatments' : 'procedures';
 
                 // Find current status to toggle
-                let currentItem: any;
+                let currentItem: TreatmentType | Procedure | undefined;
                 if (isCategory) {
                     currentItem = treatments.find(t => t.treatment_type_id === deleteState.id);
                 } else {
@@ -391,16 +382,19 @@ export function TreatmentTypeList() {
                 // Fix: Check is_active_in_hospital for Hospital Admin, not master is_active
                 const currentStatus = currentItem?.is_active_in_hospital ?? true;
 
-                const payload: any = {
+                const payload: {
+                    is_active_in_hospital: boolean;
+                    treatment_type_id?: number;
+                    procedure_id?: number;
+                    price?: number;
+                } = {
                     is_active_in_hospital: !currentStatus,
-                    // Pass other required fields if strictly needed by upsert, but usually upsertHospitalRecord handles partials if record exists 
-                    // Actually upsertHospitalRecord requires Master ID in body.
                     [isCategory ? 'treatment_type_id' : 'procedure_id']: deleteState.id
                 };
 
                 // Fix: Pass price for procedures to satisfy Prisma upsert 'create' validation
                 if (!isCategory && isHospitalAdmin) {
-                    payload.price = currentItem?.price || 0;
+                    payload.price = (currentItem as Procedure)?.price || 0;
                 }
 
                 // Use PUT to upsert/update hospital record
@@ -416,7 +410,8 @@ export function TreatmentTypeList() {
                 addToast("Status updated", "success");
             }
             setDeleteState(prev => ({ ...prev, open: false }));
-            fetchData();
+            if (deleteState.type === 'Category') mutateT();
+            else mutateP();
         } catch (error) {
             console.error("Delete failed", error);
             addToast("Failed to update status", "error");

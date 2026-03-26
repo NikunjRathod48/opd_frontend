@@ -31,40 +31,21 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { reportsService, DashboardAnalytics } from "@/services/reports-service";
 import { useToast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
+import { useApi } from "@/hooks/use-api";
 
 export function AdminDashboard() {
     const { user } = useAuth();
     const { patients, doctors, appointments, receipts, hospitals } = useData();
     const { addToast } = useToast();
 
-    const [isLoading, setIsLoading] = useState(true);
-    const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(null);
-
-    // Filter Logic
     const isAdmin = ['SuperAdmin', 'GroupAdmin', 'HospitalAdmin'].includes(user?.role || '');
 
-    useEffect(() => {
-        let isMounted = true;
-        const fetchDashboardData = async () => {
-            if (!isAdmin) return;
+    const analyticsUrl = !isAdmin ? null :
+        user?.hospitalgroupid ? `/reports/dashboard-analytics?hospitalGroupId=${user.hospitalgroupid}` :
+        user?.hospitalid ? `/reports/dashboard-analytics?hospitalId=${user.hospitalid}` :
+        `/reports/dashboard-analytics`;
 
-            try {
-                setIsLoading(true);
-                const data = await reportsService.getDashboardAnalytics(
-                    user?.hospitalid,
-                    user?.hospitalgroupid
-                );
-                if (isMounted) setAnalytics(data);
-            } catch (error) {
-                console.error("Failed to load dashboard analytics:", error);
-                if (isMounted) addToast("Failed to load latest analytics data.", "error");
-            } finally {
-                if (isMounted) setIsLoading(false);
-            }
-        };
-        fetchDashboardData();
-        return () => { isMounted = false; };
-    }, [user, isAdmin, addToast]);
+    const { data: analytics = null, isLoading } = useApi<DashboardAnalytics>(analyticsUrl);
 
     // Derived Metrics
     const myPatients = patients.filter(p => {
