@@ -403,7 +403,10 @@ export function DoctorQueueView() {
 
             const activeData = await queuesService.getAllQueues(activeParams);
             const activeList = Array.isArray(activeData) ? activeData : [];
-            const prevOpen = activeList.filter(q => !q.queue_date.startsWith(today));
+            const prevOpen = activeList.filter(q => {
+                const queueDate = q.queue_date.split('T')[0];
+                return queueDate < today; // Only flag PAST queues, not future ones
+            });
             setPreviousOpenQueues(prevOpen);
 
         } catch (e: any) {

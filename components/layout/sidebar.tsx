@@ -237,7 +237,7 @@ const SIDEBAR_ITEMS: MenuItem[] = [
         path: "laboratory",
         icon: Microscope,
         label: "Laboratory",
-        allowedRoles: ["HospitalAdmin", "Receptionist", "Doctor"]
+        allowedRoles: ["Receptionist", "Doctor"]
     },
     {
         key: "hospital-reports",

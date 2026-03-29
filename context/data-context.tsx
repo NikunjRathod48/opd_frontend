@@ -169,6 +169,7 @@ export interface Appointment {
     patientName?: string;
     doctorName?: string;
     type?: string;
+    appointmentno?: string;
 }
 
 export interface OPDVisit {
@@ -334,6 +335,7 @@ interface DataContextType {
     refreshReceptionists: () => Promise<void>;
     refreshDoctors: () => Promise<void>;
     fetchAppointments: () => Promise<void>;
+    fetchAvailableSlots: (doctorId: string, date: string, patientId?: string) => Promise<{ slots: any[]; existingAppointment: { time: string; status: string } | null }>;
     fetchOPDVisits: () => Promise<void>;
     savePrescription: (data: any) => Promise<void>;
     saveOpdTests: (data: any) => Promise<void>;
@@ -530,7 +532,18 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
 
     const fetchAppointments = async () => {
         try {
-            const url = user?.role === 'Patient' ? `/appointments?patient_user_id=${user.id}` : "/appointments";
+            let url = '/appointments';
+            if (user?.role === 'Patient') {
+                url += `?patient_user_id=${user.id}`;
+            } else if (user?.role === 'Doctor') {
+                // Fetch the doctor profile first if needed to get doctor_id
+                // We rely on already-cached doctors context; fall back to user_id-based lookup
+                const doctorProfile = doctors.find(d => String(d.userid) === String(user.id));
+                const doctorId = doctorProfile?.doctorid || (user as any)?.doctorid;
+                if (doctorId) url += `?doctor_id=${doctorId}`;
+            } else if (user?.hospitalid) {
+                url += `?hospital_id=${user.hospitalid}`;
+            }
             const data = await import("@/lib/api").then(m => m.api.get<any[]>(url));
             const mappedAppointments: Appointment[] = data.map(a => ({
                 appointmentid: a.appointmentid.toString(),
@@ -541,11 +554,24 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
                 status: a.status,
                 patientName: a.patientName,
                 doctorName: a.doctorName,
-                type: a.type
+                type: a.type,
+                appointmentno: a.appointmentno || '',
             }));
             setAppointments(mappedAppointments);
         } catch (err) {
             console.error("Failed to fetch appointments", err);
+        }
+    };
+
+    const fetchAvailableSlots = async (doctorId: string, date: string, patientId?: string) => {
+        try {
+            let url = `/appointments/availability?doctor_id=${doctorId}&date=${date}`;
+            if (patientId) url += `&patient_id=${patientId}`;
+            const data = await import("@/lib/api").then(m => m.api.get<{ slots: any[]; existingAppointment: { time: string; status: string } | null }>(url));
+            return { slots: data.slots || [], existingAppointment: data.existingAppointment || null };
+        } catch (err) {
+            console.error("Failed to fetch available slots", err);
+            return { slots: [], existingAppointment: null };
         }
     };
 
@@ -903,6 +929,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             fetchAppointments();
         } catch (err) {
             console.error(err);
+            throw err;
         }
     };
 
@@ -1160,6 +1187,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         updateMedicine,
         refreshDoctors: fetchDoctors,
         fetchAppointments,
+        fetchAvailableSlots,
         fetchOPDVisits,
         fetchPatients,
         savePrescription,

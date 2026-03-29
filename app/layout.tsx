@@ -26,7 +26,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={fontSans.className}>
-        <NextTopLoader color="#4F46E5" showSpinner={false} shadow="0 0 10px #4F46E5,0 0 5px #4F46E5" />
+        <NextTopLoader color="#4F46E5" showSpinner={false} height={3} zIndex={9999} shadow="0 0 10px #4F46E5,0 0 5px #4F46E5" />
         <ThemeProvider
           attribute="class"
           defaultTheme="system"

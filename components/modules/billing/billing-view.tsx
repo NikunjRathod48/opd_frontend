@@ -84,7 +84,7 @@ const PAYMENT_MODES = [
 ];
 
 export function BillingView({
-  allowedRoles = ["SuperAdmin", "GroupAdmin", "HospitalAdmin", "Receptionist", "Doctor"],
+  allowedRoles = ["SuperAdmin", "GroupAdmin", "HospitalAdmin", "Receptionist", "Doctor", "Patient"],
   readOnly = false,
   hospitalId,
 }: BillingViewProps) {
