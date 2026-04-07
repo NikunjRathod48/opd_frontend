@@ -26,25 +26,25 @@ const SPRING = { type: "spring" as const, stiffness: 420, damping: 28, mass: 0.6
 function getVariants(side: TooltipProps["side"]) {
     const OFFSET = 6;
     switch (side) {
-        case "top":    return {
-            initial: { opacity: 0, scale: 0.88, x: "-50%", y:  OFFSET },
-            animate: { opacity: 1, scale: 1,    x: "-50%", y: "-100%" },
-            exit:    { opacity: 0, scale: 0.88, x: "-50%", y:  OFFSET },
+        case "top": return {
+            initial: { opacity: 0, scale: 0.88, x: "-50%", y: OFFSET },
+            animate: { opacity: 1, scale: 1, x: "-50%", y: "-100%" },
+            exit: { opacity: 0, scale: 0.88, x: "-50%", y: OFFSET },
         };
         case "bottom": return {
             initial: { opacity: 0, scale: 0.88, x: "-50%", y: -OFFSET },
-            animate: { opacity: 1, scale: 1,    x: "-50%", y:       0 },
-            exit:    { opacity: 0, scale: 0.88, x: "-50%", y: -OFFSET },
+            animate: { opacity: 1, scale: 1, x: "-50%", y: 0 },
+            exit: { opacity: 0, scale: 0.88, x: "-50%", y: -OFFSET },
         };
-        case "left":   return {
-            initial: { opacity: 0, scale: 0.88, x:  OFFSET, y: "-50%" },
-            animate: { opacity: 1, scale: 1,    x: "-100%", y: "-50%" },
-            exit:    { opacity: 0, scale: 0.88, x:  OFFSET, y: "-50%" },
+        case "left": return {
+            initial: { opacity: 0, scale: 0.88, x: OFFSET, y: "-50%" },
+            animate: { opacity: 1, scale: 1, x: "-100%", y: "-50%" },
+            exit: { opacity: 0, scale: 0.88, x: OFFSET, y: "-50%" },
         };
-        case "right":  return {
+        case "right": return {
             initial: { opacity: 0, scale: 0.88, x: -OFFSET, y: "-50%" },
-            animate: { opacity: 1, scale: 1,    x:       0, y: "-50%" },
-            exit:    { opacity: 0, scale: 0.88, x: -OFFSET, y: "-50%" },
+            animate: { opacity: 1, scale: 1, x: 0, y: "-50%" },
+            exit: { opacity: 0, scale: 0.88, x: -OFFSET, y: "-50%" },
         };
     }
 }
@@ -60,10 +60,10 @@ function TooltipArrow({ side }: { side: TooltipProps["side"] }) {
     const size = 7; // half-base of the triangle
 
     const paths: Record<NonNullable<TooltipProps["side"]>, React.CSSProperties & { path: string }> = {
-        top:    { path: `M0,0 L${size},0 L${size / 2},${size * 0.75}Z`, bottom: -size * 0.75 + 0.5, left: "50%", transform: "translateX(-50%)",   top:    "auto" },
+        top: { path: `M0,0 L${size},0 L${size / 2},${size * 0.75}Z`, bottom: -size * 0.75 + 0.5, left: "50%", transform: "translateX(-50%)", top: "auto" },
         bottom: { path: `M0,${size * 0.75} L${size},${size * 0.75} L${size / 2},0Z`, top: -size * 0.75 + 0.5, left: "50%", transform: "translateX(-50%)", bottom: "auto" },
-        left:   { path: `M0,0 L${size * 0.75},${size / 2} L0,${size}Z`, right: -size * 0.75 + 0.5, top: "50%", transform: "translateY(-50%)", left: "auto" },
-        right:  { path: `M${size * 0.75},0 L0,${size / 2} L${size * 0.75},${size}Z`, left: -size * 0.75 + 0.5, top: "50%", transform: "translateY(-50%)", right: "auto" },
+        left: { path: `M0,0 L${size * 0.75},${size / 2} L0,${size}Z`, right: -size * 0.75 + 0.5, top: "50%", transform: "translateY(-50%)", left: "auto" },
+        right: { path: `M${size * 0.75},0 L0,${size / 2} L${size * 0.75},${size}Z`, left: -size * 0.75 + 0.5, top: "50%", transform: "translateY(-50%)", right: "auto" },
     };
 
     const config = paths[side ?? "top"];
@@ -98,8 +98,8 @@ export function Tooltip({
     const [isVisible, setIsVisible] = React.useState(false);
     const [coords, setCoords] = React.useState({ x: 0, y: 0 });
     const triggerRef = React.useRef<HTMLDivElement>(null);
-    const timerRef   = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-    const [mounted,  setMounted]  = React.useState(false);
+    const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+    const [mounted, setMounted] = React.useState(false);
 
     React.useEffect(() => { setMounted(true); }, []);
 
@@ -109,10 +109,10 @@ export function Tooltip({
         let x = 0, y = 0;
 
         switch (side) {
-            case "top":    x = r.left + r.width  / 2; y = r.top    - GAP; break;
-            case "bottom": x = r.left + r.width  / 2; y = r.bottom + GAP; break;
-            case "left":   x = r.left - GAP;          y = r.top    + r.height / 2; break;
-            case "right":  x = r.right + GAP;         y = r.top    + r.height / 2; break;
+            case "top": x = r.left + r.width / 2; y = r.top - GAP; break;
+            case "bottom": x = r.left + r.width / 2; y = r.bottom + GAP; break;
+            case "left": x = r.left - GAP; y = r.top + r.height / 2; break;
+            case "right": x = r.right + GAP; y = r.top + r.height / 2; break;
         }
         setCoords({ x, y });
     }, [side]);
@@ -134,11 +134,11 @@ export function Tooltip({
     // Re-position on scroll / resize while open
     React.useEffect(() => {
         if (!isVisible) return;
-        window.addEventListener("scroll",  updatePosition, true);
-        window.addEventListener("resize",  updatePosition);
+        window.addEventListener("scroll", updatePosition, true);
+        window.addEventListener("resize", updatePosition);
         return () => {
-            window.removeEventListener("scroll",  updatePosition, true);
-            window.removeEventListener("resize",  updatePosition);
+            window.removeEventListener("scroll", updatePosition, true);
+            window.removeEventListener("resize", updatePosition);
         };
     }, [isVisible, updatePosition]);
 

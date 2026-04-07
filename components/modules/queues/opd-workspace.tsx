@@ -1,495 +1,627 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { useState, useEffect, useCallback, useReducer } from "react";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import { motion, AnimatePresence } from "framer-motion";
+import { cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/toast";
 import { useAuth } from "@/context/auth-context";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import {
-    User, Stethoscope, FlaskConical, Pill, Activity,
-    CheckCircle2, X, Plus, Save, LogOut, Loader2, ClipboardList, CalendarPlus, Calendar,
-    Phone, HeartPulse, FileText, ChevronDown, ChevronUp, AlertCircle, Syringe, Printer
+    Stethoscope, FlaskConical, Syringe, Pill, FileText,
+    Plus, Loader2, LogOut, User, Phone, HeartPulse,
+    CalendarPlus, CheckCircle2, X, Printer, Activity, Save,
 } from "lucide-react";
 import { opdService, OpdVisit } from "@/services/opd-service";
 import { clinicalService } from "@/services/clinical-service";
 import { followupsService } from "@/services/followups-service";
 import { Diagnosis, Medicine, Test, Procedure } from "@/types/clinical";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { clinicalReducer, emptyClinical, ClinicalState, ClinicalAction } from "./clinical-reducer";
+import { LiveSummaryPanel } from "./live-summary-panel";
+
+// re-export so live-summary-panel.tsx can import from here (backwards compat)
+export type { ClinicalState };
+
+// ─── Props ────────────────────────────────────────────────────────────────────
 
 interface OpdWorkspaceProps {
     opdId: number;
+    onDone?: () => void;
     onDischarge?: (status?: string) => void;
 }
 
-function calculateAge(dob: string) {
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function calcAge(dob?: string) {
     if (!dob) return "—";
-    const today = new Date();
-    const birth = new Date(dob);
-    let age = today.getFullYear() - birth.getFullYear();
-    if (today.getMonth() < birth.getMonth() || (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate())) age--;
-    return `${age}y`;
+    const diff = Date.now() - new Date(dob).getTime();
+    return `${Math.floor(diff / 3.15576e10)}y`;
 }
 
-// ─── Section Wrapper ──────────────────────────────────────────────────────────
+// ─── Skeleton ─────────────────────────────────────────────────────────────────
 
-function Section({
-    icon: Icon,
-    title,
-    subtitle,
-    accentColor,
-    badgeCount,
-    children,
-    disabled,
-}: {
-    icon: any;
-    title: string;
-    subtitle?: string;
-    accentColor: string;
-    badgeCount?: number;
-    children: React.ReactNode;
-    disabled?: boolean;
-}) {
+function WorkspaceSkeleton() {
     return (
-        <div className={cn(
-            "ws-section rounded-2xl border border-border/60 bg-card overflow-hidden transition-all",
-            disabled && "opacity-60 pointer-events-none"
-        )}>
-            <div className={cn("flex items-center gap-3 px-5 py-4 border-b border-border/40", "bg-muted/20")}>
-                <div className={cn("h-8 w-8 rounded-xl flex items-center justify-center shrink-0", accentColor)}>
-                    <Icon className="h-4 w-4" />
+        <div className="grid grid-cols-12 gap-4 h-full animate-pulse">
+            <div className="col-span-3 space-y-3">
+                <div className="h-48 rounded-2xl bg-slate-100 dark:bg-slate-800" />
+                <div className="h-32 rounded-2xl bg-slate-100 dark:bg-slate-800" />
+            </div>
+            <div className="col-span-6 space-y-3">
+                <div className="h-10 rounded-2xl bg-slate-100 dark:bg-slate-800" />
+                <div className="h-64 rounded-2xl bg-slate-100 dark:bg-slate-800" />
+            </div>
+            <div className="col-span-3 space-y-3">
+                <div className="h-80 rounded-2xl bg-slate-100 dark:bg-slate-800" />
+                <div className="h-20 rounded-2xl bg-slate-100 dark:bg-slate-800" />
+            </div>
+        </div>
+    );
+}
+
+// ─── Stat cell (used inside LeftPanel vitals) ─────────────────────────────────
+
+function StatCell({ label, value }: { label: string; value?: string | number }) {
+    return (
+        <div className="flex flex-col gap-0.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl px-3 py-2.5 border border-slate-100 dark:border-slate-700/60">
+            <span className="text-[9px] font-bold uppercase tracking-widest text-slate-400">{label}</span>
+            <span className="text-sm font-bold text-slate-800 dark:text-slate-200">{value || "—"}</span>
+        </div>
+    );
+}
+
+// ─── Left Panel ───────────────────────────────────────────────────────────────
+
+function LeftPanel({ visit }: { visit: OpdVisit }) {
+    const patient = visit.patients;
+    const name = patient?.users_patients_user_idTousers?.full_name || "Patient";
+    const initials = name.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
+    const age = calcAge(patient?.dob);
+    const v = visit.vitals;
+
+    return (
+        <motion.div
+            initial={{ opacity: 0, x: -16 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.35 }}
+            className="space-y-3"
+        >
+            {/* Patient identity card */}
+            <div className="rounded-2xl border border-slate-200/60 dark:border-slate-800/60 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-sm overflow-hidden">
+                {/* Gradient header */}
+                <div className="bg-gradient-to-br from-violet-600 to-indigo-600 px-4 pt-5 pb-8 relative">
+                    <div className="h-14 w-14 rounded-2xl bg-white/20 backdrop-blur flex items-center justify-center shadow-lg mx-auto">
+                        <span className="text-2xl font-extrabold text-white">{initials}</span>
+                    </div>
+                    <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-8 h-8 rotate-45 bg-white dark:bg-slate-900 border-l border-t border-slate-200/60 dark:border-slate-800/60" />
                 </div>
-                <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-foreground">{title}</span>
-                        {badgeCount !== undefined && badgeCount > 0 && (
-                            <span className="inline-flex items-center justify-center h-5 min-w-5 px-1.5 rounded-full bg-foreground/10 text-[10px] font-bold text-foreground/70">
-                                {badgeCount}
+                {/* Info */}
+                <div className="px-4 pt-6 pb-4 text-center space-y-1">
+                    <p className="font-extrabold text-base text-slate-800 dark:text-slate-100 leading-tight">{name}</p>
+                    <div className="flex items-center justify-center gap-2 flex-wrap">
+                        {patient?.gender && (
+                            <span className="px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-950/40 text-violet-600 dark:text-violet-400 text-[10px] font-bold border border-violet-200 dark:border-violet-800 capitalize">
+                                {patient.gender}
                             </span>
                         )}
+                        <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 text-[10px] font-bold border border-slate-200 dark:border-slate-700">
+                            {age}
+                        </span>
                     </div>
-                    {subtitle && <p className="text-[11px] text-muted-foreground mt-0.5">{subtitle}</p>}
-                </div>
-            </div>
-            <div className="p-5">{children}</div>
-        </div>
-    );
-}
-
-// ─── Tag Chip ─────────────────────────────────────────────────────────────────
-
-function Chip({ children, color = "default", onRemove }: { children: React.ReactNode; color?: string; onRemove?: () => void }) {
-    const colorMap: Record<string, string> = {
-        default: "bg-muted/60 border-border/60 text-foreground/70",
-        blue: "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300",
-        primary: "bg-blue-100 dark:bg-blue-900/60 border-blue-300 dark:border-blue-700 text-blue-800 dark:text-blue-200",
-        purple: "bg-violet-50 dark:bg-violet-950/40 border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-300",
-        green: "bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300",
-        orange: "bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-800 text-orange-700 dark:text-orange-300",
-    };
-    return (
-        <span className={cn(
-            "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium",
-            colorMap[color] || colorMap.default
-        )}>
-            {children}
-            {onRemove && (
-                <button onClick={onRemove} className="ml-0.5 opacity-50 hover:opacity-100 transition-opacity">
-                    <X className="h-2.5 w-2.5" />
-                </button>
-            )}
-        </span>
-    );
-}
-
-// ─── Add Row (shared pattern) ─────────────────────────────────────────────────
-
-function AddRow({
-    options,
-    value,
-    onChange,
-    placeholder,
-    onAdd,
-    isSaving,
-    buttonLabel,
-    buttonColor = "blue",
-    extra,
-}: {
-    options: { label: string; value: string }[];
-    value: string;
-    onChange: (v: string) => void;
-    placeholder: string;
-    onAdd: () => void;
-    isSaving: boolean;
-    buttonLabel: string;
-    buttonColor?: string;
-    extra?: React.ReactNode;
-}) {
-    const colorCls: Record<string, string> = {
-        blue: "bg-blue-600 hover:bg-blue-700 shadow-[0_2px_8px_rgba(37,99,235,0.25)]",
-        purple: "bg-violet-600 hover:bg-violet-700 shadow-[0_2px_8px_rgba(124,58,237,0.25)]",
-        orange: "bg-orange-500 hover:bg-orange-600 shadow-[0_2px_8px_rgba(249,115,22,0.25)]",
-        cyan: "bg-cyan-600 hover:bg-cyan-700 shadow-[0_2px_8px_rgba(8,145,178,0.25)]",
-    };
-    return (
-        <div className="space-y-2">
-            <div className="flex gap-2">
-                <div className="flex-1">
-                    <SearchableSelect options={options} value={value} onChange={onChange} placeholder={placeholder} className="h-10" />
-                </div>
-                {extra}
-                <button
-                    disabled={isSaving || !value}
-                    onClick={onAdd}
-                    className={cn(
-                        "h-10 px-4 rounded-xl text-white text-sm font-semibold flex items-center gap-1.5 shrink-0 transition-all disabled:opacity-40 disabled:cursor-not-allowed",
-                        colorCls[buttonColor]
+                    {patient?.phone_number && (
+                        <p className="text-xs text-muted-foreground flex items-center justify-center gap-1">
+                            <Phone className="h-3 w-3" />{patient.phone_number}
+                        </p>
                     )}
-                >
-                    {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
-                    {buttonLabel}
-                </button>
+                </div>
+                {/* OPD meta row */}
+                <div className="border-t border-slate-100 dark:border-slate-800 px-4 py-3 flex items-center justify-between">
+                    <span className="font-mono text-[10px] font-semibold text-muted-foreground">{visit.opd_no}</span>
+                    <span className={cn(
+                        "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border",
+                        visit.is_active
+                            ? "bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-800 dark:text-emerald-400"
+                            : "bg-slate-100 border-slate-200 text-slate-500 dark:bg-slate-800 dark:border-slate-700"
+                    )}>
+                        {visit.is_active && (
+                            <span className="relative flex h-1.5 w-1.5">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
+                            </span>
+                        )}
+                        {visit.is_active ? "Active" : "Discharged"}
+                    </span>
+                </div>
             </div>
+
+            {/* Vitals grid */}
+            {v && (
+                <div className="rounded-2xl border border-slate-200/60 dark:border-slate-800/60 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-sm p-3">
+                    <p className="text-[9px] font-bold uppercase tracking-widest text-slate-400 px-1 pb-2">Vitals</p>
+                    <div className="grid grid-cols-2 gap-1.5">
+                        <StatCell label="BP" value={v.blood_pressure} />
+                        <StatCell label="Pulse" value={v.pulse ? `${v.pulse} bpm` : undefined} />
+                        <StatCell label="Temp" value={v.temperature ? `${v.temperature}°C` : undefined} />
+                        <StatCell label="SpO₂" value={v.spo2 ? `${v.spo2}%` : undefined} />
+                        <StatCell label="Height" value={v.height ? `${v.height} cm` : undefined} />
+                        <StatCell label="Weight" value={v.weight ? `${v.weight} kg` : undefined} />
+                    </div>
+                </div>
+            )}
+        </motion.div>
+    );
+}
+
+// ─── Tab button ───────────────────────────────────────────────────────────────
+
+function TabBtn({ id, label, icon: Icon, count, active, onClick }: {
+    id: string; label: string; icon: any; count: number; active: boolean; onClick: () => void;
+}) {
+    return (
+        <button
+            onClick={onClick}
+            className={cn(
+                "flex items-center gap-2 whitespace-nowrap px-4 h-10 rounded-xl text-sm font-semibold transition-all shrink-0",
+                active
+                    ? "bg-background text-foreground shadow-sm ring-1 ring-border"
+                    : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+            )}
+        >
+            <Icon className="h-4 w-4" />
+            {label}
+            {count > 0 && (
+                <span className={cn(
+                    "inline-flex h-5 min-w-5 items-center justify-center rounded-full text-[10px] font-bold px-1",
+                    active ? "bg-violet-600 text-white" : "bg-muted text-muted-foreground"
+                )}>
+                    {count}
+                </span>
+            )}
+        </button>
+    );
+}
+
+// ─── Chip ─────────────────────────────────────────────────────────────────────
+
+function Chip({ children, color = "default" }: { children: React.ReactNode; color?: string }) {
+    const c: Record<string, string> = {
+        default: "bg-slate-100 border-slate-200 text-slate-700 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300",
+        blue:    "bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-950/40 dark:border-blue-800 dark:text-blue-300",
+        primary: "bg-blue-100 border-blue-300 text-blue-800 dark:bg-blue-900/50 dark:border-blue-700 dark:text-blue-200",
+        cyan:    "bg-cyan-50 border-cyan-200 text-cyan-700 dark:bg-cyan-950/40 dark:border-cyan-800 dark:text-cyan-300",
+        orange:  "bg-orange-50 border-orange-200 text-orange-700 dark:bg-orange-950/40 dark:border-orange-800 dark:text-orange-300",
+        green:   "bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300",
+        violet:  "bg-violet-50 border-violet-200 text-violet-700 dark:bg-violet-950/40 dark:border-violet-800 dark:text-violet-300",
+    };
+    return (
+        <motion.span
+            initial={{ opacity: 0, scale: 0.8 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className={cn("inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold", c[color] || c.default)}
+        >
+            {children}
+        </motion.span>
+    );
+}
+
+// ─── Empty state ──────────────────────────────────────────────────────────────
+
+function EmptyState({ icon: Icon, label }: { icon: any; label: string }) {
+    return (
+        <div className="flex flex-col items-center justify-center py-10 gap-2 text-muted-foreground/60">
+            <div className="h-12 w-12 rounded-2xl bg-muted/40 flex items-center justify-center">
+                <Icon className="h-5 w-5" />
+            </div>
+            <p className="text-xs font-medium">{label}</p>
         </div>
     );
 }
 
-// ─── Sub-panel: Diagnoses ─────────────────────────────────────────────────────
+// ─── Diagnosis Tab ────────────────────────────────────────────────────────────
 
-function DiagnosisPanel({ opdId, hospitalId, existing }: { opdId: number; hospitalId?: number; existing: OpdVisit["opd_diagnoses"] }) {
+function DiagnosisTab({ opdId, hospitalId, diagnoses, dispatch }: {
+    opdId: number; hospitalId?: number;
+    diagnoses: ClinicalState["diagnoses"];
+    dispatch: React.Dispatch<ClinicalAction>;
+}) {
     const { addToast } = useToast();
-    const [masterDiagnoses, setMasterDiagnoses] = useState<Diagnosis[]>([]);
-    const [selectedDx, setSelectedDx] = useState("");
-    const [isSaving, setIsSaving] = useState(false);
-    const [localDx, setLocalDx] = useState(existing || []);
+    const [master, setMaster] = useState<Diagnosis[]>([]);
+    const [selected, setSelected] = useState("");
+    const [saving, setSaving] = useState(false);
 
     useEffect(() => {
-        clinicalService.getDiagnoses(hospitalId).then(d => setMasterDiagnoses(Array.isArray(d) ? d : [])).catch(() => { });
+        clinicalService.getDiagnoses(hospitalId)
+            .then(d => setMaster(Array.isArray(d) ? d : []))
+            .catch(() => {});
     }, [hospitalId]);
-    useEffect(() => { setLocalDx(existing || []); }, [existing]);
 
-    const diagnosisOptions = (masterDiagnoses || []).filter((d: any) => d.diagnosis_id).map((d: any) => ({
-        label: d.diagnosis_name, value: String(d.diagnosis_id),
-    }));
+    const opts = master
+        .filter(d => d.diagnosis_id)
+        .map(d => ({ label: d.diagnosis_name, value: String(d.diagnosis_id) }));
 
     const handleAdd = async () => {
-        if (!selectedDx) { addToast("Select a diagnosis", "error"); return; }
-        setIsSaving(true);
+        if (!selected) return;
+        setSaving(true);
         try {
-            const res = await opdService.addDiagnosis(opdId, { diagnosis_id: Number(selectedDx), is_primary: localDx.length === 0 });
-            const master = (masterDiagnoses || []).find((d: any) => String(d.diagnosis_id) === selectedDx);
-            setLocalDx(prev => [...prev, {
-                opd_diagnosis_id: (res as any).opd_diagnosis_id, diagnosis_id: Number(selectedDx),
-                is_primary: localDx.length === 0, remarks: "",
-                diagnoses: { diagnosis_id: Number(selectedDx), diagnosis_name: master?.diagnosis_name || "" }
-            }]);
-            setSelectedDx("");
+            const res = await opdService.addDiagnosis(opdId, {
+                diagnosis_id: Number(selected),
+                is_primary: diagnoses.length === 0,
+            });
+            const m = master.find(d => String(d.diagnosis_id) === selected);
+            dispatch({
+                type: "ADD_DIAGNOSIS",
+                payload: {
+                    opd_diagnosis_id: (res as any).opd_diagnosis_id,
+                    diagnosis_id: Number(selected),
+                    is_primary: diagnoses.length === 0,
+                    remarks: "",
+                    diagnoses: { diagnosis_id: Number(selected), diagnosis_name: m?.diagnosis_name || "" },
+                },
+            });
+            setSelected("");
             addToast("Diagnosis added", "success");
         } catch (e: any) {
-            addToast(e?.message || "Failed to add diagnosis", "error");
-        } finally { setIsSaving(false); }
+            addToast(e?.message || "Failed", "error");
+        } finally { setSaving(false); }
     };
 
     return (
         <div className="space-y-3">
-            <AddRow options={diagnosisOptions} value={selectedDx} onChange={setSelectedDx}
-                placeholder="Search diagnosis..." onAdd={handleAdd} isSaving={isSaving}
-                buttonLabel="Add" buttonColor="blue" />
-            {localDx.length > 0 ? (
+            <div className="flex gap-2">
+                <div className="flex-1">
+                    <SearchableSelect options={opts} value={selected} onChange={setSelected}
+                        placeholder="Search diagnosis..." className="h-10" />
+                </div>
+                <button
+                    onClick={handleAdd}
+                    disabled={!selected || saving}
+                    className="h-10 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-sm font-semibold flex items-center gap-1.5 transition-colors"
+                >
+                    {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                    Add
+                </button>
+            </div>
+            {diagnoses.length > 0 ? (
                 <div className="flex flex-wrap gap-2 pt-1">
-                    {localDx.map(d => (
-                        <Chip key={d.opd_diagnosis_id} color={d.is_primary ? "primary" : "blue"}>
-                            {d.is_primary && <span className="text-[9px] font-bold uppercase opacity-70">Primary ·</span>}
-                            {d.diagnoses?.diagnosis_name}
-                        </Chip>
-                    ))}
+                    <AnimatePresence>
+                        {diagnoses.map(d => (
+                            <Chip key={d.opd_diagnosis_id} color={d.is_primary ? "primary" : "blue"}>
+                                {d.is_primary && <span className="text-[9px] font-bold uppercase opacity-60">Primary ·</span>}
+                                {d.diagnoses?.diagnosis_name}
+                            </Chip>
+                        ))}
+                    </AnimatePresence>
                 </div>
             ) : (
-                <p className="text-xs text-muted-foreground/60 italic">No diagnoses added yet</p>
+                <EmptyState icon={Stethoscope} label="No diagnosis added yet" />
             )}
         </div>
     );
 }
 
-// ─── Sub-panel: Tests ─────────────────────────────────────────────────────────
+// ─── Tests Tab ────────────────────────────────────────────────────────────────
 
-function TestsPanel({ opdId, hospitalId, existing }: { opdId: number; hospitalId?: number; existing: OpdVisit["opd_tests"] }) {
+function TestsTab({ opdId, hospitalId, tests, dispatch }: {
+    opdId: number; hospitalId?: number;
+    tests: ClinicalState["tests"];
+    dispatch: React.Dispatch<ClinicalAction>;
+}) {
     const { addToast } = useToast();
-    const [masterTests, setMasterTests] = useState<Test[]>([]);
-    const [selectedTest, setSelectedTest] = useState("");
-    const [isSaving, setIsSaving] = useState(false);
-    const [localTests, setLocalTests] = useState(existing || []);
+    const [master, setMaster] = useState<Test[]>([]);
+    const [selected, setSelected] = useState("");
+    const [saving, setSaving] = useState(false);
 
     useEffect(() => {
-        clinicalService.getTests(hospitalId).then(d => setMasterTests(Array.isArray(d) ? d : [])).catch(() => { });
+        clinicalService.getTests(hospitalId)
+            .then(d => setMaster(Array.isArray(d) ? d : []))
+            .catch(() => {});
     }, [hospitalId]);
-    useEffect(() => { setLocalTests(existing || []); }, [existing]);
 
-    const testOptions = (masterTests || [])
+    const opts = master
         .filter((t: any) => t.test_id && t.is_linked !== false)
-        .map((t: any) => ({
-            label: t.test_name, value: String(t.test_id),
-        }));
+        .map(t => ({ label: t.test_name, value: String(t.test_id) }));
+
+    const statusColor: Record<string, string> = { Ordered: "cyan", Completed: "green", Pending: "orange" };
 
     const handleAdd = async () => {
-        if (!selectedTest) { addToast("Select a test", "error"); return; }
-        setIsSaving(true);
+        if (!selected) return;
+        setSaving(true);
         try {
-            const res = await opdService.addTest(opdId, { test_id: Number(selectedTest) });
-            const master = (masterTests || []).find((t: any) => String(t.test_id) === selectedTest);
-            setLocalTests(prev => [...prev, {
-                opd_test_id: (res as any).opd_test_id, test_id: Number(selectedTest),
-                test_status: "Ordered",
-                tests: { test_id: Number(selectedTest), test_name: master?.test_name || "" }
-            }]);
-            setSelectedTest("");
+            const res = await opdService.addTest(opdId, { test_id: Number(selected) });
+            const m = master.find(t => String(t.test_id) === selected);
+            dispatch({
+                type: "ADD_TEST",
+                payload: {
+                    opd_test_id: (res as any).opd_test_id,
+                    test_id: Number(selected),
+                    test_status: "Ordered",
+                    tests: { test_id: Number(selected), test_name: m?.test_name || "" },
+                },
+            });
+            setSelected("");
             addToast("Test ordered", "success");
         } catch (e: any) {
-            addToast(e?.message || "Failed to order test", "error");
-        } finally { setIsSaving(false); }
-    };
-
-    const statusColor: Record<string, string> = {
-        Ordered: "blue", Completed: "green", Pending: "orange",
+            addToast(e?.message || "Failed", "error");
+        } finally { setSaving(false); }
     };
 
     return (
         <div className="space-y-3">
-            <AddRow options={testOptions} value={selectedTest} onChange={setSelectedTest}
-                placeholder="Search lab test..." onAdd={handleAdd} isSaving={isSaving}
-                buttonLabel="Order" buttonColor="cyan" />
-            {localTests.length > 0 ? (
+            <div className="flex gap-2">
+                <div className="flex-1">
+                    <SearchableSelect options={opts} value={selected} onChange={setSelected}
+                        placeholder="Search lab test..." className="h-10" />
+                </div>
+                <button
+                    onClick={handleAdd}
+                    disabled={!selected || saving}
+                    className="h-10 px-4 rounded-xl bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 text-white text-sm font-semibold flex items-center gap-1.5 transition-colors"
+                >
+                    {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                    Order
+                </button>
+            </div>
+            {tests.length > 0 ? (
                 <div className="flex flex-col gap-2 pt-1">
-                    {localTests.map(t => (
-                        <div key={t.opd_test_id} className="flex flex-col gap-1.5 p-3 rounded-xl border border-border/60 bg-muted/10">
-                            <div className="flex items-center gap-2">
-                                <Chip color={statusColor[t.test_status] || "blue"}>
-                                    <FlaskConical className="h-3 w-3 opacity-60" />
-                                    {t.tests?.test_name}
-                                    <span className="opacity-50">· {t.test_status}</span>
-                                </Chip>
-                            </div>
-                            {t.test_status === "Completed" && t.result_summary && (
-                                <div className="mt-1 ml-1 text-sm text-foreground/80 bg-background border border-border/50 rounded-lg p-3 whitespace-pre-wrap">
-                                    <p className="text-[10px] uppercase font-bold text-muted-foreground mb-1">Laboratory Findings</p>
-                                    {t.result_summary}
+                    <AnimatePresence>
+                        {tests.map(t => (
+                            <motion.div
+                                key={t.opd_test_id}
+                                initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                                className="flex items-center gap-2.5 p-3 rounded-xl border border-border/60 bg-muted/20"
+                            >
+                                <FlaskConical className="h-4 w-4 text-cyan-500 shrink-0 mt-0.5 self-start" />
+                                <div className="flex-1 min-w-0 flex flex-col">
+                                    <span className="text-sm font-semibold">{t.tests?.test_name}</span>
+                                    {t.result_summary && (
+                                        <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{t.result_summary}</p>
+                                    )}
                                 </div>
-                            )}
-                        </div>
-                    ))}
+                                <div className="self-start">
+                                    <Chip color={statusColor[t.test_status] || "cyan"}>
+                                        {t.test_status}
+                                    </Chip>
+                                </div>
+                            </motion.div>
+                        ))}
+                    </AnimatePresence>
                 </div>
             ) : (
-                <p className="text-xs text-muted-foreground/60 italic">No tests ordered yet</p>
+                <EmptyState icon={FlaskConical} label="No tests ordered yet" />
             )}
         </div>
     );
 }
 
-// ─── Sub-panel: Procedures ────────────────────────────────────────────────────
+// ─── Procedures Tab ───────────────────────────────────────────────────────────
 
-function ProceduresPanel({ opdId, hospitalId, existing }: { opdId: number; hospitalId?: number; existing: OpdVisit["opd_procedures"] }) {
+function ProceduresTab({ opdId, hospitalId, procedures, dispatch }: {
+    opdId: number; hospitalId?: number;
+    procedures: ClinicalState["procedures"];
+    dispatch: React.Dispatch<ClinicalAction>;
+}) {
     const { addToast } = useToast();
-    const [masterProcedures, setMasterProcedures] = useState<Procedure[]>([]);
-    const [selectedProcedure, setSelectedProcedure] = useState("");
-    const [isSaving, setIsSaving] = useState(false);
-    const [localProcedures, setLocalProcedures] = useState(existing || []);
+    const [master, setMaster] = useState<Procedure[]>([]);
+    const [selected, setSelected] = useState("");
+    const [saving, setSaving] = useState(false);
 
     useEffect(() => {
-        clinicalService.getProcedures(hospitalId).then(d => setMasterProcedures(Array.isArray(d) ? d : [])).catch(() => { });
+        clinicalService.getProcedures(hospitalId)
+            .then(d => setMaster(Array.isArray(d) ? d : []))
+            .catch(() => {});
     }, [hospitalId]);
-    useEffect(() => { setLocalProcedures(existing || []); }, [existing]);
 
-    const procedureOptions = (masterProcedures || [])
+    const opts = master
         .filter((p: any) => p.procedure_id && p.is_linked !== false)
-        .map((p: any) => ({
-            label: p.procedure_name, value: String(p.procedure_id),
-        }));
+        .map(p => ({ label: p.procedure_name, value: String(p.procedure_id) }));
 
     const handleAdd = async () => {
-        if (!selectedProcedure) { addToast("Select a procedure", "error"); return; }
-        setIsSaving(true);
+        if (!selected) return;
+        setSaving(true);
         try {
-            const procedure_date = new Date().toISOString().split('T')[0];
-            const res = await opdService.addProcedure(opdId, { procedure_id: Number(selectedProcedure), procedure_date });
-            const master = (masterProcedures || []).find((p: any) => String(p.procedure_id) === selectedProcedure);
-            setLocalProcedures(prev => [...prev, {
-                opd_procedure_id: (res as any).opd_procedure_id, procedure_id: Number(selectedProcedure),
-                procedure_date, remarks: "",
-                procedures: { procedure_id: Number(selectedProcedure), procedure_name: master?.procedure_name || "" }
-            }]);
-            setSelectedProcedure("");
+            const date = new Date().toISOString().split("T")[0];
+            const res = await opdService.addProcedure(opdId, { procedure_id: Number(selected), procedure_date: date });
+            const m = master.find(p => String(p.procedure_id) === selected);
+            dispatch({
+                type: "ADD_PROCEDURE",
+                payload: {
+                    opd_procedure_id: (res as any).opd_procedure_id,
+                    procedure_id: Number(selected),
+                    procedure_date: date,
+                    remarks: "",
+                    procedures: { procedure_id: Number(selected), procedure_name: m?.procedure_name || "" },
+                },
+            });
+            setSelected("");
             addToast("Procedure added", "success");
         } catch (e: any) {
-            addToast(e?.message || "Failed to add procedure", "error");
-        } finally { setIsSaving(false); }
+            addToast(e?.message || "Failed", "error");
+        } finally { setSaving(false); }
     };
 
     return (
         <div className="space-y-3">
-            <AddRow options={procedureOptions} value={selectedProcedure} onChange={setSelectedProcedure}
-                placeholder="Search procedure..." onAdd={handleAdd} isSaving={isSaving}
-                buttonLabel="Add" buttonColor="orange" />
-            {localProcedures.length > 0 ? (
+            <div className="flex gap-2">
+                <div className="flex-1">
+                    <SearchableSelect options={opts} value={selected} onChange={setSelected}
+                        placeholder="Search procedure..." className="h-10" />
+                </div>
+                <button
+                    onClick={handleAdd}
+                    disabled={!selected || saving}
+                    className="h-10 px-4 rounded-xl bg-orange-500 hover:bg-orange-600 disabled:opacity-40 text-white text-sm font-semibold flex items-center gap-1.5 transition-colors"
+                >
+                    {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                    Add
+                </button>
+            </div>
+            {procedures.length > 0 ? (
                 <div className="flex flex-wrap gap-2 pt-1">
-                    {(localProcedures as any[]).map((p) => (
-                        <Chip key={p.opd_procedure_id} color="orange">
-                            <Syringe className="h-3 w-3 opacity-60" />
-                            {p.procedures?.procedure_name}
-                            {p.procedure_date && <span className="opacity-50">· {new Date(p.procedure_date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</span>}
-                        </Chip>
-                    ))}
+                    <AnimatePresence>
+                        {procedures.map(p => (
+                            <Chip key={p.opd_procedure_id} color="orange">
+                                <Syringe className="h-3 w-3 opacity-60" />
+                                {(p as any).procedures?.procedure_name}
+                            </Chip>
+                        ))}
+                    </AnimatePresence>
                 </div>
             ) : (
-                <p className="text-xs text-muted-foreground/60 italic">No procedures added yet</p>
+                <EmptyState icon={Syringe} label="No procedures added yet" />
             )}
         </div>
     );
 }
 
-// ─── Sub-panel: Prescription ──────────────────────────────────────────────────
+// ─── Prescription Tab ─────────────────────────────────────────────────────────
 
-interface PrescriptionItem { medicine_id: number; medicine_name: string; dosage: string; quantity: number; duration_days: number; instructions: string; }
+interface DraftItem { medicine_id: number; name: string; dosage: string; qty: number; days: number; instructions: string; }
 
-function PrescriptionPanel({ opdId, doctorId, hospitalId, existing }: { opdId: number; doctorId?: number; hospitalId?: number; existing: OpdVisit["prescriptions"] }) {
+function PrescriptionTab({ opdId, doctorId, hospitalId, medicines, dispatch }: {
+    opdId: number; doctorId?: number; hospitalId?: number;
+    medicines: ClinicalState["medicines"];
+    dispatch: React.Dispatch<ClinicalAction>;
+}) {
     const { addToast } = useToast();
-    const [masterMedicines, setMasterMedicines] = useState<Medicine[]>([]);
-    const [items, setItems] = useState<PrescriptionItem[]>([]);
+    const [master, setMaster] = useState<Medicine[]>([]);
+    const [draft, setDraft] = useState<DraftItem[]>([]);
+    const [notes, setNotes] = useState("");
     const [selectedMed, setSelectedMed] = useState("");
     const [dosage, setDosage] = useState("1-0-1");
     const [qty, setQty] = useState(1);
-    const [duration, setDuration] = useState(5);
+    const [days, setDays] = useState(5);
     const [instructions, setInstructions] = useState("After Meal");
-    const [notes, setNotes] = useState("");
-    const [isSaving, setIsSaving] = useState(false);
-    const [savedPrescriptions, setSavedPrescriptions] = useState(existing || []);
+    const [saving, setSaving] = useState(false);
 
     useEffect(() => {
-        clinicalService.getMedicines(hospitalId).then(d => setMasterMedicines(Array.isArray(d) ? d : [])).catch(() => { });
+        clinicalService.getMedicines(hospitalId)
+            .then(d => setMaster(Array.isArray(d) ? d : []))
+            .catch(() => {});
     }, [hospitalId]);
-    useEffect(() => { setSavedPrescriptions(existing || []); }, [existing]);
 
-    const medOptions = (masterMedicines || [])
+    const opts = master
         .filter((m: any) => m.medicine_id && m.is_linked !== false)
-        .map((m: any) => ({
-            label: m.medicine_name, value: String(m.medicine_id),
-        }));
+        .map(m => ({ label: `${m.medicine_name} ${m.strength || ""}`.trim(), value: String(m.medicine_id) }));
 
-    const handleAddItem = () => {
-        if (!selectedMed || !dosage) { addToast("Select medicine and enter dosage", "error"); return; }
-        const master = (masterMedicines || []).find((m: any) => String(m.medicine_id) === selectedMed);
-        setItems(prev => [...prev, { medicine_id: Number(selectedMed), medicine_name: master?.medicine_name || "", dosage, quantity: qty, duration_days: duration, instructions }]);
-        setSelectedMed(""); setDosage("1-0-1"); setQty(1); setDuration(5); setInstructions("After Meal");
+    const addToDraft = () => {
+        if (!selectedMed) return;
+        const m = master.find(x => String(x.medicine_id) === selectedMed);
+        setDraft(prev => [...prev, { medicine_id: Number(selectedMed), name: m?.medicine_name || "", dosage, qty, days, instructions }]);
+        setSelectedMed(""); setDosage("1-0-1"); setQty(1); setDays(5); setInstructions("After Meal");
     };
 
-    const handleSave = async () => {
-        if (items.length === 0) { addToast("Add at least one medicine", "error"); return; }
-        setIsSaving(true);
+    const savePrescription = async () => {
+        if (draft.length === 0) { addToast("Add at least one medicine", "error"); return; }
+        setSaving(true);
         try {
             const res = await opdService.addPrescription(opdId, {
-                doctor_id: doctorId || 0, notes,
-                items: items.map(i => ({ medicine_id: i.medicine_id, dosage: i.dosage, quantity: i.quantity, duration_days: i.duration_days, instructions: i.instructions }))
+                doctor_id: doctorId || 0,
+                notes,
+                items: draft.map(i => ({ medicine_id: i.medicine_id, dosage: i.dosage, quantity: i.qty, duration_days: i.days, instructions: i.instructions })),
             });
-            setSavedPrescriptions(prev => [...prev, res as any]);
-            setItems([]); setNotes("");
+            // Embed prescription_items from draft so live count updates immediately
+            dispatch({
+                type: "ADD_MEDICINE",
+                payload: {
+                    ...(res as any),
+                    prescription_items: draft.map(i => ({
+                        prescription_item_id: Date.now() + i.medicine_id,
+                        medicine_id: i.medicine_id,
+                        dosage: i.dosage,
+                        quantity: i.qty,
+                        duration_days: i.days,
+                        instructions: i.instructions,
+                        medicines: { medicine_id: i.medicine_id, medicine_name: i.name },
+                    })),
+                },
+            });
+            setDraft([]); setNotes("");
             addToast("Prescription saved!", "success");
         } catch (e: any) {
-            addToast(e?.message || "Failed to save prescription", "error");
-        } finally { setIsSaving(false); }
+            addToast(e?.message || "Failed", "error");
+        } finally { setSaving(false); }
     };
 
-    const totalPrescriptions = savedPrescriptions.reduce((acc, p) => acc + (p.prescription_items?.length || 0), 0);
+    const savedCount = medicines.reduce((a, p) => a + ((p as any).prescription_items?.length || 0), 0);
 
     return (
         <div className="space-y-4">
-            {/* Med selector row */}
+            {/* Medicine selector row */}
             <div className="flex gap-2">
                 <div className="flex-1">
-                    <SearchableSelect options={medOptions} value={selectedMed} onChange={setSelectedMed} placeholder="Search medicine..." className="h-10" />
+                    <SearchableSelect options={opts} value={selectedMed} onChange={setSelectedMed}
+                        placeholder="Search medicine..." className="h-10" />
                 </div>
                 <input
-                    className="h-10 w-28 px-3 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500 transition-all opd-mono"
-                    placeholder="1-0-1"
-                    value={dosage}
-                    onChange={e => setDosage(e.target.value)}
-                />
+                    className="h-10 w-24 px-3 rounded-xl border border-input bg-background text-sm font-mono focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all"
+                    placeholder="1-0-1" value={dosage} onChange={e => setDosage(e.target.value)} />
             </div>
-
             {/* Qty / Days / Instructions */}
             <div className="grid grid-cols-3 gap-2">
-                <div className="space-y-1.5">
-                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Qty</label>
-                    <input type="number" min={1} className="h-9 w-full px-3 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all" value={qty} onChange={e => setQty(+e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Days</label>
-                    <input type="number" min={1} className="h-9 w-full px-3 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all" value={duration} onChange={e => setDuration(+e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                    <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Instructions</label>
-                    <input className="h-9 w-full px-3 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all truncate" placeholder="After meals" value={instructions} onChange={e => setInstructions(e.target.value)} />
+                {[
+                    { label: "Qty", val: qty, set: (v: number) => setQty(v) },
+                    { label: "Days", val: days, set: (v: number) => setDays(v) },
+                ].map(f => (
+                    <div key={f.label} className="space-y-1">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">{f.label}</label>
+                        <input type="number" min={1} value={f.val} onChange={e => f.set(+e.target.value)}
+                            className="h-9 w-full px-3 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all" />
+                    </div>
+                ))}
+                <div className="space-y-1">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Instructions</label>
+                    <input value={instructions} onChange={e => setInstructions(e.target.value)}
+                        className="h-9 w-full px-3 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all truncate"
+                        placeholder="After meal" />
                 </div>
             </div>
-
-            <button
-                onClick={handleAddItem}
-                className="w-full h-9 rounded-xl border-2 border-dashed border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 text-sm font-semibold hover:bg-violet-50 dark:hover:bg-violet-950/30 hover:border-violet-300 transition-all flex items-center justify-center gap-1.5"
-            >
+            {/* Add to draft */}
+            <button onClick={addToDraft} disabled={!selectedMed}
+                className="w-full h-9 rounded-xl border-2 border-dashed border-violet-200 dark:border-violet-800 text-violet-600 dark:text-violet-400 text-sm font-semibold hover:bg-violet-50 dark:hover:bg-violet-950/30 transition-all flex items-center justify-center gap-1.5 disabled:opacity-40">
                 <Plus className="h-3.5 w-3.5" /> Add to Prescription
             </button>
-
-            {/* Staged items */}
-            {items.length > 0 && (
+            {/* Draft list */}
+            {draft.length > 0 && (
                 <div className="rounded-xl border border-violet-200 dark:border-violet-800 overflow-hidden">
-                    <div className="bg-violet-50/60 dark:bg-violet-950/20 px-4 py-2.5 border-b border-violet-200 dark:border-violet-800">
-                        <p className="text-[11px] font-semibold text-violet-700 dark:text-violet-300 uppercase tracking-wider">Prescription Draft · {items.length} item{items.length !== 1 ? 's' : ''}</p>
+                    <div className="bg-violet-50/60 dark:bg-violet-950/20 px-4 py-2 border-b border-violet-200 dark:border-violet-800">
+                        <p className="text-[11px] font-bold text-violet-700 dark:text-violet-300 uppercase tracking-wider">
+                            Draft · {draft.length} item{draft.length !== 1 ? "s" : ""}
+                        </p>
                     </div>
-                    <div className="divide-y divide-border/40">
-                        {items.map((item, i) => (
-                            <div key={i} className="flex items-center justify-between px-4 py-2.5 group hover:bg-muted/20 transition-colors">
-                                <div className="flex items-baseline gap-2.5 min-w-0">
-                                    <span className="text-sm font-semibold text-foreground/90 truncate">{item.medicine_name}</span>
-                                    <span className="text-[11px] text-muted-foreground opd-mono shrink-0">{item.dosage}</span>
-                                    <span className="text-[11px] text-muted-foreground shrink-0">{item.duration_days}d</span>
-                                    {item.instructions && <span className="text-[11px] text-muted-foreground/60 italic shrink-0 hidden sm:inline">{item.instructions}</span>}
+                    <div className="divide-y divide-violet-100 dark:divide-violet-900/40">
+                        {draft.map((item, i) => (
+                            <div key={i} className="flex items-center gap-3 px-4 py-2.5 group">
+                                <Pill className="h-3.5 w-3.5 text-violet-400 shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-semibold truncate">{item.name}</p>
+                                    <p className="text-[10px] text-muted-foreground font-mono">{item.dosage} · {item.days}d · {item.instructions}</p>
                                 </div>
-                                <button
-                                    onClick={() => setItems(prev => prev.filter((_, j) => j !== i))}
-                                    className="h-6 w-6 rounded-lg flex items-center justify-center text-muted-foreground hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 opacity-0 group-hover:opacity-100 transition-all shrink-0 ml-2"
-                                >
+                                <button onClick={() => setDraft(d => d.filter((_, j) => j !== i))}
+                                    className="opacity-0 group-hover:opacity-100 h-6 w-6 rounded-lg hover:bg-red-50 text-red-400 flex items-center justify-center transition-all">
                                     <X className="h-3 w-3" />
                                 </button>
                             </div>
                         ))}
                     </div>
-                    <div className="px-4 py-3 border-t border-violet-100 dark:border-violet-900 space-y-3 bg-background/60">
-                        <textarea
-                            className="w-full h-14 px-3 py-2.5 rounded-xl border border-input bg-background text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all"
-                            placeholder="Prescription notes (optional)..."
-                            value={notes}
-                            onChange={e => setNotes(e.target.value)}
-                        />
-                        <button
-                            disabled={isSaving}
-                            onClick={handleSave}
-                            className="w-full h-9 rounded-xl bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white text-sm font-semibold flex items-center justify-center gap-1.5 shadow-[0_2px_8px_rgba(124,58,237,0.3)] transition-all"
-                        >
-                            {isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                            Save Prescription
-                        </button>
-                    </div>
                 </div>
             )}
-
-            {totalPrescriptions > 0 && (
+            {/* Notes + Save */}
+            <textarea
+                className="w-full h-16 px-4 py-3 rounded-xl border border-input bg-background text-sm resize-none focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all placeholder:text-muted-foreground/50"
+                placeholder="Prescription notes (optional)..." value={notes} onChange={e => setNotes(e.target.value)} />
+            <button onClick={savePrescription} disabled={draft.length === 0 || saving}
+                className="w-full h-10 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 disabled:opacity-40 text-white text-sm font-bold flex items-center justify-center gap-2 shadow-md shadow-violet-500/20 transition-all hover:scale-[1.01] active:scale-[0.99]">
+                {saving ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : <><Save className="h-4 w-4" /> Save Prescription</>}
+            </button>
+            {/* Saved confirm */}
+            {savedCount > 0 && (
                 <div className="flex items-center gap-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-4 py-2.5">
                     <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                     <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-                        {totalPrescriptions} medicine{totalPrescriptions !== 1 ? 's' : ''} prescribed across {savedPrescriptions.length} prescription{savedPrescriptions.length !== 1 ? 's' : ''}
+                        {savedCount} medicine{savedCount !== 1 ? "s" : ""} prescribed
                     </p>
                 </div>
             )}
@@ -497,9 +629,9 @@ function PrescriptionPanel({ opdId, doctorId, hospitalId, existing }: { opdId: n
     );
 }
 
-// ─── Main Workspace ───────────────────────────────────────────────────────────
+// ─── Main OpdWorkspace ────────────────────────────────────────────────────────
 
-export function OpdWorkspace({ opdId, onDischarge }: OpdWorkspaceProps) {
+export function OpdWorkspace({ opdId, onDone, onDischarge }: OpdWorkspaceProps) {
     const { addToast } = useToast();
     const { user } = useAuth();
     const [visit, setVisit] = useState<OpdVisit | null>(null);
@@ -508,34 +640,43 @@ export function OpdWorkspace({ opdId, onDischarge }: OpdWorkspaceProps) {
     const [notes, setNotes] = useState("");
     const [isSavingNotes, setIsSavingNotes] = useState(false);
     const [isDischarging, setIsDischarging] = useState(false);
-    const [showFollowupDialog, setShowFollowupDialog] = useState(false);
+    const [showFollowup, setShowFollowup] = useState(false);
     const [followupDate, setFollowupDate] = useState("");
     const [followupReason, setFollowupReason] = useState("");
     const [isSavingFollowup, setIsSavingFollowup] = useState(false);
+    const [activeTab, setActiveTab] = useState("diagnosis");
+    const [clinical, dispatch] = useReducer(clinicalReducer, emptyClinical);
 
-    const doctorId = Number((user as any)?.doctorid) || undefined;
+    const doctorId  = Number((user as any)?.doctorid)  || undefined;
     const hospitalId = Number((user as any)?.hospitalid) || undefined;
 
     const load = useCallback(async () => {
         setIsLoading(true);
         try {
             const v = await opdService.getVisit(opdId);
-            setVisit(v); setComplaint(v.chief_complaint || ""); setNotes(v.clinical_notes || "");
+            setVisit(v);
+            setComplaint(v.chief_complaint || "");
+            setNotes(v.clinical_notes || "");
+            dispatch({ type: "RESET", payload: {
+                diagnoses:  v.opd_diagnoses  || [],
+                tests:      v.opd_tests      || [],
+                procedures: v.opd_procedures || [],
+                medicines:  v.prescriptions  || [],
+            }});
         } catch (e: any) {
-            addToast(e?.message || "Failed to load OPD visit", "error");
+            addToast(e?.message || "Failed to load visit", "error");
         } finally { setIsLoading(false); }
     }, [opdId, addToast]);
 
     useEffect(() => { load(); }, [load]);
 
-    const handleSaveNotes = async () => {
+    const saveNotes = async () => {
         setIsSavingNotes(true);
         try {
             await opdService.updateVisit(opdId, { chief_complaint: complaint, clinical_notes: notes });
             addToast("Notes saved", "success");
-        } catch (e: any) {
-            addToast(e?.message || "Failed to save notes", "error");
-        } finally { setIsSavingNotes(false); }
+        } catch { addToast("Failed to save notes", "error"); }
+        finally { setIsSavingNotes(false); }
     };
 
     const handleDischarge = async () => {
@@ -543,10 +684,10 @@ export function OpdWorkspace({ opdId, onDischarge }: OpdWorkspaceProps) {
         try {
             await opdService.updateVisit(opdId, { is_active: false });
             addToast("Patient discharged", "success");
-            setVisit(prev => prev ? { ...prev, is_active: false } : null); // Optimistic update
-            setShowFollowupDialog(true);
+            setVisit(prev => prev ? { ...prev, is_active: false } : null);
+            setShowFollowup(true);
         } catch (e: any) {
-            addToast(e?.message || "Failed to discharge", "error");
+            addToast(e?.message || "Discharge failed", "error");
         } finally { setIsDischarging(false); }
     };
 
@@ -556,532 +697,287 @@ export function OpdWorkspace({ opdId, onDischarge }: OpdWorkspaceProps) {
             try {
                 await followupsService.create({ visit_id: opdId, recommended_date: followupDate, reason: followupReason });
                 addToast("Follow-up scheduled", "success");
-            } catch {
-                addToast("Failed to save follow-up, but patient is discharged", "error");
-            } finally { setIsSavingFollowup(false); }
+            } catch { addToast("Follow-up save failed, patient is still discharged", "error"); }
+            finally { setIsSavingFollowup(false); }
         }
-        setShowFollowupDialog(false);
+        setShowFollowup(false);
         onDischarge?.("Completed");
     };
 
-    if (isLoading) {
-        return (
-            <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground">
-                <div className="h-10 w-10 rounded-2xl bg-muted/50 flex items-center justify-center">
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                </div>
-                <p className="text-sm font-medium">Loading visit...</p>
-            </div>
-        );
-    }
-
+    if (isLoading) return <WorkspaceSkeleton />;
     if (!visit) return null;
 
-    const patient = visit.patients;
-    const patientName = patient?.users_patients_user_idTousers?.full_name || "Patient";
-    const age = calculateAge(patient?.dob || "");
+    const dxCount   = clinical.diagnoses.length;
+    const testCount = clinical.tests.length;
+    const procCount = clinical.procedures.length;
+    const rxCount   = clinical.medicines.reduce((a, p) => a + ((p as any).prescription_items?.length || 0), 0);
 
-    const dxCount = visit.opd_diagnoses?.length || 0;
-    const testCount = visit.opd_tests?.length || 0;
-    const procCount = visit.opd_procedures?.length || 0;
-    const rxCount = visit.prescriptions?.reduce((a, p) => a + (p.prescription_items?.length || 0), 0) || 0;
-    
-    const handlePrint = () => {
-        const iframe = document.createElement('iframe');
-        iframe.style.position = 'fixed';
-        iframe.style.right = '0';
-        iframe.style.bottom = '0';
-        iframe.style.width = '0';
-        iframe.style.height = '0';
-        iframe.style.border = '0';
-        document.body.appendChild(iframe);
+    const tabs = [
+        { id: "diagnosis",  label: "Diagnosis",  icon: Stethoscope,  count: dxCount },
+        { id: "medicines",  label: "Medicines",  icon: Pill,         count: rxCount },
+        { id: "tests",      label: "Tests",      icon: FlaskConical,  count: testCount },
+        { id: "procedures", label: "Procedures", icon: Syringe,      count: procCount },
+    ];
 
-        const doc = iframe.contentWindow?.document;
-        if (doc) {
-            let html = `
-                <html>
-                    <head>
-                        <title>Prescription - ${patientName}</title>
-                        <style>
-                            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-                            @page { margin: 15mm; size: A4; }
-                            body { font-family: 'Inter', sans-serif; color: #111; line-height: 1.5; font-size: 13px; }
-                            .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #2563eb; padding-bottom: 15px; margin-bottom: 20px; }
-                            .header-left h1 { margin: 0; font-size: 24px; color: #1e3a8a; letter-spacing: -0.5px; }
-                            .header-left p { margin: 5px 0 0; color: #64748b; font-size: 14px; }
-                            .header-right { text-align: right; }
-                            .header-right h2 { margin: 0; font-size: 18px; color: #334155; }
-                            .header-right p { margin: 2px 0 0; color: #64748b; font-size: 12px; }
-                            
-                            .patient-card { display: flex; justify-content: space-between; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 15px; margin-bottom: 25px; }
-                            .p-grid { display: grid; grid-template-columns: max-content auto; gap: 4px 12px; }
-                            .p-label { color: #64748b; font-weight: 500; font-size: 12px; }
-                            .p-val { font-weight: 600; color: #0f172a; }
-                            
-                            .section { margin-bottom: 25px; page-break-inside: avoid; }
-                            .section-title { font-size: 14px; font-weight: 700; color: #1e40af; border-bottom: 1px solid #cbd5e1; padding-bottom: 6px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-                            
-                            p.notes { background: #f8fafc; padding: 10px; border-left: 3px solid #cbd5e1; margin: 0; white-space: pre-wrap; }
-                            
-                            ul { margin: 0; padding-left: 20px; }
-                            li { margin-bottom: 6px; color: #334155; }
-                            li strong { color: #0f172a; }
-                            
-                            table { w-full; border-collapse: collapse; margin-top: 5px; width: 100%; }
-                            th, td { text-align: left; padding: 10px; border-bottom: 1px solid #e2e8f0; }
-                            th { background: #f1f5f9; font-weight: 600; color: #475569; font-size: 12px; text-transform: uppercase; }
-                            td { color: #1e293b; font-size: 13px; }
-                            
-                            .rx-symbol { font-size: 24px; font-weight: bold; color: #3b82f6; font-family: serif; float: left; margin-right: 15px; margin-top: -5px; }
-                            
-                            .footer { margin-top: 50px; display: flex; justify-content: space-between; align-items: flex-end; page-break-inside: avoid; }
-                            .sign-box { text-align: center; width: 200px; }
-                            .sign-line { border-top: 1px dashed #64748b; padding-top: 8px; font-weight: 600; color: #0f172a; font-size: 14px; }
-                        </style>
-                    </head>
-                    <body>
-                        <div class="header">
-                            <div class="header-left">
-                                <h1>MEDCORE HOSPITAL</h1>
-                                <p>Excellence in Healthcare</p>
-                            </div>
-                            <div class="header-right">
-                                <h2>Dr. ${visit.doctors?.users_doctors_user_idTousers?.full_name || 'Doctor'}</h2>
-                                <p>${(visit.doctors as any)?.departments_master?.department_name || ''} Specialist</p>
-                                <p>Reg No: ${(visit.doctors as any)?.medical_license_no || 'N/A'}</p>
-                            </div>
-                        </div>
+    const generatePrescriptionPDF = () => {
+        const doc = new jsPDF();
+        const pw = doc.internal.pageSize.getWidth();
 
-                        <div class="patient-card">
-                            <div class="p-grid">
-                                <span class="p-label">Patient Name:</span> <span class="p-val">${patientName}</span>
-                                <span class="p-label">Age / Gender:</span> <span class="p-val">${age} / ${patient?.gender || '—'}</span>
-                                <span class="p-label">Patient ID:</span> <span class="p-val">${patient?.patient_no || '—'}</span>
-                            </div>
-                            <div class="p-grid">
-                                <span class="p-label">Date:</span> <span class="p-val">${new Date((visit as any).visit_datetime || (visit as any).visitdatetime || new Date()).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-                                <span class="p-label">OPD No:</span> <span class="p-val">${visit.opd_no}</span>
-                            </div>
-                        </div>
-            `;
+        // ── Violet header bar ──
+        doc.setFillColor(109, 40, 217);
+        doc.rect(0, 0, pw, 38, "F");
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(20); doc.setFont("helvetica", "bold");
+        doc.text("PRESCRIPTION", 14, 16);
+        doc.setFontSize(8); doc.setFont("helvetica", "normal");
+        doc.text(`OPD: ${visit.opd_no}`, 14, 26);
+        doc.text(`Date: ${new Date(visit.visit_datetime).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}`, 14, 33);
+        const docName = visit.doctors?.users_doctors_user_idTousers?.full_name;
+        if (docName) doc.text(`Dr. ${docName}`, pw - 14, 30, { align: "right" });
 
-            if (complaint || notes) {
-                html += `<div class="section"><div class="section-title">Clinical Notes</div>`;
-                if (complaint) html += `<p style="margin-bottom:8px;"><strong>Chief Complaint:</strong> ${complaint}</p>`;
-                if (notes) html += `<p class="notes"><strong>Examination:</strong><br/>${notes}</p>`;
-                html += `</div>`;
-            }
+        // ── Patient card ──
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(14, 44, pw - 28, 26, 3, 3, "F");
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(14, 44, pw - 28, 26, 3, 3, "S");
+        const patName = visit.patients?.users_patients_user_idTousers?.full_name || "Patient";
+        const dob = visit.patients?.dob;
+        const age = dob ? `${Math.floor((Date.now() - new Date(dob).getTime()) / 3.15576e10)}y` : "";
+        const gen = visit.patients?.gender || "";
+        const phone = visit.patients?.phone_number || "";
+        doc.setTextColor(15, 23, 42); doc.setFontSize(12); doc.setFont("helvetica", "bold");
+        doc.text(patName, 20, 55);
+        doc.setFontSize(9); doc.setFont("helvetica", "normal"); doc.setTextColor(100, 116, 139);
+        doc.text([age, gen, phone].filter(Boolean).join(" · "), 20, 63);
 
-            if (visit.opd_diagnoses && visit.opd_diagnoses.length > 0) {
-                html += `<div class="section"><div class="section-title">Diagnoses</div><ul>`;
-                visit.opd_diagnoses.forEach(d => {
-                    html += `<li><strong>${d.diagnoses?.diagnosis_name}</strong> ${d.is_primary ? '<span style="color:#2563eb; font-size:11px;">(Primary)</span>' : ''}</li>`;
-                });
-                html += `</ul></div>`;
-            }
+        let y = 80;
 
-            if ((visit.opd_tests && visit.opd_tests.length > 0) || (visit.opd_procedures && visit.opd_procedures.length > 0)) {
-                html += `<div style="display: flex; gap: 30px; margin-bottom: 25px; page-break-inside: avoid;">`;
-                if (visit.opd_tests && visit.opd_tests.length > 0) {
-                    html += `<div style="flex: 1;"><div class="section-title">Investigations Ordered</div><ul>`;
-                    visit.opd_tests.forEach(t => { html += `<li>${t.tests?.test_name}</li>`; });
-                    html += `</ul></div>`;
-                }
-                if (visit.opd_procedures && visit.opd_procedures.length > 0) {
-                    html += `<div style="flex: 1;"><div class="section-title">Procedures</div><ul>`;
-                    visit.opd_procedures.forEach(p => { html += `<li>${p.procedures?.procedure_name}</li>`; });
-                    html += `</ul></div>`;
-                }
-                html += `</div>`;
-            }
-
-            if (visit.prescriptions && visit.prescriptions.length > 0) {
-                html += `<div class="section"><span class="rx-symbol">℞</span><div class="section-title" style="margin-left: 35px;">Prescription</div><table>
-                        <thead><tr><th>Medicine</th><th>Dosage</th><th>Duration</th><th>Instructions</th></tr></thead><tbody>`;
-                
-                visit.prescriptions.forEach(rx => {
-                    if (rx.prescription_items) {
-                        rx.prescription_items.forEach(item => {
-                            html += `<tr>
-                                <td><strong>${item.medicines?.medicine_name}</strong></td>
-                                <td>${item.dosage}</td>
-                                <td>${item.duration_days} Days</td>
-                                <td style="color: #64748b;">${item.instructions || '-'}</td>
-                            </tr>`;
-                        });
-                    }
-                });
-                
-                html += `</tbody></table></div>`;
-            }
-
-            html += `
-                        <div class="footer">
-                            <div style="font-size: 11px; color: #94a3b8;">
-                                <p style="margin:0;">Printed on: ${new Date().toLocaleString('en-IN')}</p>
-                                <p style="margin:0;">Valid only at MedCore Hospital and affiliated pharmacies.</p>
-                            </div>
-                            <div class="sign-box">
-                                <div class="sign-line">Doctor's Signature</div>
-                            </div>
-                        </div>
-                    </body>
-                </html>
-            `;
-
-            doc.open();
-            doc.write(html);
-            doc.close();
-            
-            setTimeout(() => {
-                iframe.contentWindow?.focus();
-                iframe.contentWindow?.print();
-                setTimeout(() => document.body.removeChild(iframe), 1000);
-            }, 250);
+        // ── Complaint ──
+        if (complaint) {
+            doc.setFontSize(8); doc.setFont("helvetica", "bold"); doc.setTextColor(109, 40, 217);
+            doc.text("CHIEF COMPLAINT", 14, y); y += 5;
+            doc.setFontSize(10); doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
+            doc.text(complaint, 14, y, { maxWidth: pw - 28 }); y += 10;
         }
+
+        // ── Diagnoses ──
+        if (clinical.diagnoses.length > 0) {
+            doc.setFontSize(8); doc.setFont("helvetica", "bold"); doc.setTextColor(109, 40, 217);
+            doc.text("DIAGNOSES", 14, y); y += 5;
+            clinical.diagnoses.forEach((d, i) => {
+                doc.setFontSize(10); doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
+                doc.text(`${i + 1}. ${d.diagnoses?.diagnosis_name || ""}${d.is_primary ? " (Primary)" : ""}`, 18, y); y += 6;
+            }); y += 2;
+        }
+
+        // ── Medicines table ──
+        const allMeds: any[] = [];
+        clinical.medicines.forEach(rx => {
+            ((rx as any).prescription_items || []).forEach((item: any) => {
+                allMeds.push([item.medicines?.medicine_name || "", item.dosage || "", String(item.quantity || ""), `${item.duration_days || ""} days`, item.instructions || ""]);
+            });
+        });
+        if (allMeds.length > 0) {
+            doc.setFontSize(8); doc.setFont("helvetica", "bold"); doc.setTextColor(109, 40, 217);
+            doc.text("Rx — MEDICINES", 14, y); y += 3;
+            autoTable(doc, {
+                startY: y,
+                head: [["Medicine", "Dosage", "Qty", "Duration", "Instructions"]],
+                body: allMeds,
+                headStyles: { fillColor: [109, 40, 217], textColor: 255, fontStyle: "bold", fontSize: 8 },
+                bodyStyles: { fontSize: 9, textColor: [15, 23, 42] },
+                alternateRowStyles: { fillColor: [248, 250, 252] },
+                margin: { left: 14, right: 14 },
+                theme: "grid",
+            });
+            y = (doc as any).lastAutoTable.finalY + 8;
+        }
+
+        // ── Tests ──
+        if (clinical.tests.length > 0) {
+            doc.setFontSize(8); doc.setFont("helvetica", "bold"); doc.setTextColor(109, 40, 217);
+            doc.text("TESTS ORDERED", 14, y); y += 5;
+            clinical.tests.forEach((t, i) => {
+                doc.setFontSize(10); doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
+                doc.text(`${i + 1}. ${t.tests?.test_name || ""} [${t.test_status}]`, 18, y); y += 6;
+            }); y += 2;
+        }
+
+        // ── Procedures ──
+        if (clinical.procedures.length > 0) {
+            doc.setFontSize(8); doc.setFont("helvetica", "bold"); doc.setTextColor(109, 40, 217);
+            doc.text("PROCEDURES", 14, y); y += 5;
+            clinical.procedures.forEach((p, i) => {
+                doc.setFontSize(10); doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
+                doc.text(`${i + 1}. ${(p as any).procedures?.procedure_name || ""}`, 18, y); y += 6;
+            }); y += 2;
+        }
+
+        // ── Clinical notes ──
+        if (notes) {
+            doc.setFontSize(8); doc.setFont("helvetica", "bold"); doc.setTextColor(109, 40, 217);
+            doc.text("CLINICAL NOTES", 14, y); y += 5;
+            doc.setFontSize(9); doc.setFont("helvetica", "normal"); doc.setTextColor(15, 23, 42);
+            doc.text(notes, 14, y, { maxWidth: pw - 28 }); y += 12;
+        }
+
+        // ── Footer ──
+        const ph = doc.internal.pageSize.getHeight();
+        doc.setDrawColor(226, 232, 240); doc.line(14, ph - 18, pw - 14, ph - 18);
+        doc.setFont("helvetica", "italic"); doc.setFontSize(7); doc.setTextColor(148, 163, 184);
+        doc.text("This prescription was generated electronically from the OPD Management System.", pw / 2, ph - 11, { align: "center" });
+
+        doc.save(`prescription-${visit.opd_no}.pdf`);
     };
 
     return (
-        <>
-            <style>{`
-                @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Karla:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Fira+Mono:wght@400;500&display=swap');
-                .ws-root { font-family: 'Karla', sans-serif; }
-                .ws-root * { font-family: inherit; }
-                .ws-display { font-family: 'Syne', sans-serif !important; }
-                .opd-mono { font-family: 'Fira Mono', monospace !important; }
-                @keyframes ws-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-                .ws-animate { animation: ws-in 0.35s ease both; }
-                .ws-animate-1 { animation: ws-in 0.35s 0.05s ease both; }
-                .ws-animate-2 { animation: ws-in 0.35s 0.1s ease both; }
-                .ws-animate-3 { animation: ws-in 0.35s 0.15s ease both; }
-                .ws-animate-4 { animation: ws-in 0.35s 0.2s ease both; }
-                .ws-animate-5 { animation: ws-in 0.35s 0.25s ease both; }
-                .ws-animate-6 { animation: ws-in 0.35s 0.3s ease both; }
-                .ws-section { animation: ws-in 0.3s ease both; }
-            `}</style>
+        <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4 }}
+            className="grid grid-cols-12 gap-4 items-start"
+        >
+            {/* ── LEFT (col-span-3) ── */}
+            <div className="col-span-12 lg:col-span-3">
+                <LeftPanel visit={visit} />
+            </div>
 
-            <div className="ws-root space-y-4">
-                {/* ── Patient Identity Banner ── */}
-                <div className="ws-animate rounded-2xl border border-border/50 bg-card overflow-hidden">
-                    <div className="flex flex-col sm:flex-row sm:items-stretch">
-                        {/* Left: identity */}
-                        <div className="flex items-start gap-4 p-5 flex-1">
-                            {/* Avatar */}
-                            <div className="h-14 w-14 shrink-0 rounded-2xl bg-gradient-to-br from-slate-700 to-slate-900 dark:from-slate-600 dark:to-slate-800 flex items-center justify-center shadow-md">
-                                <span className="ws-display text-xl font-bold text-white">
-                                    {patientName.split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
-                                </span>
-                            </div>
-                            <div className="min-w-0 flex-1">
-                                <h2 className="ws-display text-xl font-bold text-foreground leading-tight truncate">{patientName}</h2>
-                                <div className="flex items-center gap-3 mt-1.5 flex-wrap">
-                                    <span className="text-sm font-medium text-muted-foreground">{age}</span>
-                                    <span className="h-1 w-1 rounded-full bg-border" />
-                                    <span className="text-sm font-medium text-muted-foreground capitalize">{patient?.gender || "—"}</span>
-                                    {patient?.phone_number && (
-                                        <>
-                                            <span className="h-1 w-1 rounded-full bg-border" />
-                                            <span className="text-sm font-medium text-muted-foreground flex items-center gap-1">
-                                                <Phone className="h-3 w-3 opacity-50" />{patient.phone_number}
-                                            </span>
-                                        </>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Right: meta */}
-                        <div className="flex flex-row sm:flex-col items-start sm:items-end justify-between sm:justify-start gap-2 px-5 pb-5 sm:pt-5 sm:pb-5 sm:border-l border-border/40">
-                            <div className="space-y-1.5">
-                                <div className="flex items-center gap-2 justify-end">
-                                    <span className="opd-mono text-[11px] font-medium text-muted-foreground">{visit.opd_no}</span>
-                                    {visit.is_active ? (
-                                        <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 px-2.5 py-0.5 text-[11px] font-semibold">
-                                            <span className="relative flex h-1.5 w-1.5">
-                                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                                                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" />
-                                            </span>
-                                            Active
-                                        </span>
-                                    ) : (
-                                        <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-slate-500 px-2.5 py-0.5 text-[11px] font-semibold">
-                                            Discharged
-                                        </span>
-                                    )}
-                                </div>
-                                {patient?.patient_no && (
-                                    <p className="text-[11px] text-muted-foreground/60 text-right">UHID: <span className="opd-mono">{patient.patient_no}</span></p>
-                                )}
-                                
-                                <button
-                                    onClick={handlePrint}
-                                    className="w-full mt-2 inline-flex items-center justify-center gap-1.5 h-8 rounded-lg bg-slate-100/50 hover:bg-slate-100 dark:bg-slate-800/30 dark:hover:bg-slate-800 text-xs font-semibold text-slate-600 dark:text-slate-300 transition-all border border-transparent hover:border-border"
-                                >
-                                    <Printer className="h-3.5 w-3.5" />
-                                    Print Rx
-                                </button>
-                            </div>
-
-                            {/* Clinical summary pills */}
-                            <div className="flex flex-wrap gap-1.5 justify-end">
-                                {dxCount > 0 && <span className="opd-mono text-[10px] bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800 rounded-md px-2 py-0.5">{dxCount} Dx</span>}
-                                {testCount > 0 && <span className="opd-mono text-[10px] bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-800 rounded-md px-2 py-0.5">{testCount} Test{testCount !== 1 ? 's' : ''}</span>}
-                                {procCount > 0 && <span className="opd-mono text-[10px] bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800 rounded-md px-2 py-0.5">{procCount} Proc</span>}
-                                {rxCount > 0 && <span className="opd-mono text-[10px] bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-800 rounded-md px-2 py-0.5">{rxCount} Rx</span>}
-                            </div>
-                        </div>
+            {/* ── CENTER (col-span-6) ── */}
+            <div className="col-span-12 lg:col-span-6 space-y-4">
+                {/* Notes section */}
+                <div className="rounded-2xl border border-slate-200/60 dark:border-slate-800/60 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-sm overflow-hidden">
+                    <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 flex items-center gap-2">
+                        <FileText className="h-4 w-4 text-slate-500" />
+                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">Chief Complaint &amp; Notes</span>
                     </div>
-                </div>
-
-                {/* ── Complaint & Notes ── */}
-                <div className="ws-animate-1">
-                    <Section
-                        icon={FileText}
-                        title="Chief Complaint & Notes"
-                        subtitle="Record symptoms and clinical observations"
-                        accentColor="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
-                    >
-                        <div className="space-y-4">
-                            <div className="space-y-2">
-                                <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Chief Complaint</label>
-                                <textarea
-                                    className="w-full h-16 px-4 py-3 rounded-xl border border-input bg-background text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all placeholder:text-muted-foreground/50 disabled:opacity-50 disabled:bg-muted/30"
-                                    placeholder="Patient's chief complaint..."
-                                    value={complaint}
-                                    onChange={e => setComplaint(e.target.value)}
-                                    disabled={!visit.is_active}
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Clinical Notes</label>
-                                <textarea
-                                    className="w-full h-24 px-4 py-3 rounded-xl border border-input bg-background text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary transition-all placeholder:text-muted-foreground/50 disabled:opacity-50 disabled:bg-muted/30"
-                                    placeholder="Examination findings, clinical notes..."
-                                    value={notes}
-                                    onChange={e => setNotes(e.target.value)}
-                                    disabled={!visit.is_active}
-                                />
-                            </div>
-                            {visit.is_active && (
+                    <div className="p-5 space-y-3">
+                        <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Chief Complaint</label>
+                            <textarea
+                                className="w-full h-16 px-4 py-3 rounded-xl border border-input bg-background text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary transition-all placeholder:text-muted-foreground/50 disabled:opacity-50"
+                                placeholder="Patient's chief complaint..."
+                                value={complaint}
+                                onChange={e => setComplaint(e.target.value)}
+                                disabled={!visit.is_active}
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Examination &amp; Clinical Notes</label>
+                            <textarea
+                                className="w-full h-24 px-4 py-3 rounded-xl border border-input bg-background text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary transition-all placeholder:text-muted-foreground/50 disabled:opacity-50"
+                                placeholder="Clinical observations, examination findings..."
+                                value={notes}
+                                onChange={e => setNotes(e.target.value)}
+                                disabled={!visit.is_active}
+                            />
+                        </div>
+                        {visit.is_active && (
+                            <div className="flex justify-end">
                                 <button
-                                    onClick={handleSaveNotes}
+                                    onClick={saveNotes}
                                     disabled={isSavingNotes}
-                                    className="inline-flex items-center gap-2 h-9 px-5 rounded-xl border border-border/60 bg-background text-sm font-semibold text-foreground/80 hover:bg-muted/50 hover:text-foreground disabled:opacity-50 transition-all"
+                                    className="h-9 px-5 rounded-xl bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 text-white text-sm font-semibold flex items-center gap-2 disabled:opacity-50 transition-all"
                                 >
                                     {isSavingNotes ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
                                     Save Notes
                                 </button>
-                            )}
-                        </div>
-                    </Section>
-                </div>
-
-                {/* ── Clinical sections (only when active) ── */}
-                {visit.is_active && (
-                    <>
-                        <div className="ws-animate-2">
-                            <Section
-                                icon={Stethoscope}
-                                title="Diagnoses"
-                                subtitle="ICD diagnoses for this visit"
-                                accentColor="bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 border border-blue-100 dark:border-blue-900"
-                                badgeCount={dxCount}
-                            >
-                                <DiagnosisPanel opdId={opdId} hospitalId={hospitalId} existing={visit.opd_diagnoses} />
-                            </Section>
-                        </div>
-
-                        <div className="ws-animate-3">
-                            <Section
-                                icon={FlaskConical}
-                                title="Lab Tests"
-                                subtitle="Diagnostic and investigation orders"
-                                accentColor="bg-cyan-50 dark:bg-cyan-950/50 text-cyan-600 dark:text-cyan-400 border border-cyan-100 dark:border-cyan-900"
-                                badgeCount={testCount}
-                            >
-                                <TestsPanel opdId={opdId} hospitalId={hospitalId} existing={visit.opd_tests} />
-                            </Section>
-                        </div>
-
-                        <div className="ws-animate-4">
-                            <Section
-                                icon={Syringe}
-                                title="Procedures"
-                                subtitle="Clinical and surgical procedures"
-                                accentColor="bg-orange-50 dark:bg-orange-950/50 text-orange-600 dark:text-orange-400 border border-orange-100 dark:border-orange-900"
-                                badgeCount={procCount}
-                            >
-                                <ProceduresPanel opdId={opdId} hospitalId={hospitalId} existing={visit.opd_procedures} />
-                            </Section>
-                        </div>
-
-                        <div className="ws-animate-5">
-                            <Section
-                                icon={Pill}
-                                title="Prescription"
-                                subtitle="Medicines and dosage instructions"
-                                accentColor="bg-violet-50 dark:bg-violet-950/50 text-violet-600 dark:text-violet-400 border border-violet-100 dark:border-violet-900"
-                                badgeCount={rxCount}
-                            >
-                                <PrescriptionPanel opdId={opdId} doctorId={visit.doctor_id} hospitalId={hospitalId} existing={visit.prescriptions} />
-                            </Section>
-                        </div>
-                    </>
-                )}
-
-                {/* ── Dedicated Read-Only / Print-Only Clinical Summary ── */}
-                <div className={cn("mt-6 space-y-6 print-clinical-summary", !visit.is_active && "block")}>
-                    {/* Complaint & Notes */}
-                    {(complaint || notes) && (
-                        <div className="space-y-2 bg-slate-50 p-4 rounded-xl border">
-                            <h3 className="font-bold border-b pb-1 text-sm text-slate-700">Clinical Notes</h3>
-                            {complaint && <p className="text-sm"><strong>Chief Complaint:</strong> {complaint}</p>}
-                            {notes && <p className="text-sm"><strong>Examination:</strong> {notes}</p>}
-                        </div>
-                    )}
-
-                    {/* Diagnoses */}
-                    {visit.opd_diagnoses && visit.opd_diagnoses.length > 0 && (
-                        <div className="space-y-2 bg-blue-50/50 p-4 rounded-xl border border-blue-100">
-                            <h3 className="font-bold border-b border-blue-200 pb-1 text-sm text-blue-800">Diagnoses</h3>
-                            <ul className="list-disc pl-5 text-sm text-blue-900">
-                                {visit.opd_diagnoses.map(d => (
-                                    <li key={d.opd_diagnosis_id}>
-                                        {d.diagnoses?.diagnosis_name} {d.is_primary && <strong>(Primary)</strong>}
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-
-                    {/* Tests & Procedures */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        {visit.opd_tests && visit.opd_tests.length > 0 && (
-                            <div className="space-y-2 bg-cyan-50/50 p-4 rounded-xl border border-cyan-100">
-                                <h3 className="font-bold border-b border-cyan-200 pb-1 text-sm text-cyan-800">Lab Tests Ordered</h3>
-                                <ul className="list-disc pl-5 text-sm text-cyan-900">
-                                    {visit.opd_tests.map(t => <li key={t.opd_test_id}>{t.tests?.test_name}</li>)}
-                                </ul>
-                            </div>
-                        )}
-                        {visit.opd_procedures && visit.opd_procedures.length > 0 && (
-                            <div className="space-y-2 bg-orange-50/50 p-4 rounded-xl border border-orange-100">
-                                <h3 className="font-bold border-b border-orange-200 pb-1 text-sm text-orange-800">Procedures</h3>
-                                <ul className="list-disc pl-5 text-sm text-orange-900">
-                                    {visit.opd_procedures.map(p => <li key={p.opd_procedure_id}>{p.procedures?.procedure_name}</li>)}
-                                </ul>
                             </div>
                         )}
                     </div>
-
-                    {/* Prescriptions */}
-                    {visit.prescriptions && visit.prescriptions.length > 0 && (
-                        <div className="space-y-2 bg-violet-50/50 p-4 rounded-xl border border-violet-100">
-                            <h3 className="font-bold border-b border-violet-200 pb-1 text-sm text-violet-800">Rx (Prescription)</h3>
-                            <div className="w-full border border-violet-200 rounded-lg overflow-hidden bg-white">
-                                <table className="w-full text-left text-sm">
-                                    <thead className="bg-violet-50 border-b border-violet-200 text-violet-900">
-                                        <tr>
-                                            <th className="p-2 w-10 text-center">#</th>
-                                            <th className="p-2">Medicine Name</th>
-                                            <th className="p-2 w-24">Dosage</th>
-                                            <th className="p-2 w-20">Days</th>
-                                            <th className="p-2 w-48">Instructions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-200">
-                                        {visit.prescriptions.flatMap(p => p.prescription_items || []).map((item, idx) => (
-                                            <tr key={idx}>
-                                                <td className="p-2 text-center text-gray-500">{idx + 1}</td>
-                                                <td className="p-2 font-semibold">{item.medicines?.medicine_name}</td>
-                                                <td className="p-2 font-mono text-xs">{item.dosage}</td>
-                                                <td className="p-2">{item.duration_days} days</td>
-                                                <td className="p-2 italic text-gray-600">{item.instructions || "—"}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    )}
                 </div>
 
-                {/* ── Discharge / Complete Action ── */}
-                <div className="ws-animate-6 pt-2 pb-1 print-hide">
-                    {visit.is_active ? (
-                        <div className="rounded-2xl border border-red-100 dark:border-red-900/50 bg-red-50/40 dark:bg-red-950/10 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                            <div className="flex items-start gap-3">
-                                <div className="h-8 w-8 rounded-xl bg-red-100 dark:bg-red-900/50 flex items-center justify-center shrink-0 mt-0.5">
-                                    <LogOut className="h-4 w-4 text-red-600 dark:text-red-400" />
-                                </div>
-                                <div>
-                                    <p className="text-sm font-semibold text-foreground">Discharge Patient</p>
-                                    <p className="text-xs text-muted-foreground mt-0.5">This will mark the visit as complete and close the active inputs.</p>
-                                </div>
-                            </div>
-                            <button
-                                disabled={isDischarging}
-                                onClick={handleDischarge}
-                                className="inline-flex items-center justify-center gap-2 h-10 px-6 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-sm font-semibold shadow-[0_2px_8px_rgba(220,38,38,0.3)] hover:shadow-[0_4px_12px_rgba(220,38,38,0.4)] transition-all shrink-0"
+                {/* Clinical tabs */}
+                <div className="rounded-2xl border border-slate-200/60 dark:border-slate-800/60 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-sm overflow-hidden">
+                    {/* Tab nav */}
+                    <div className="flex overflow-x-auto gap-1 p-2 bg-slate-50/60 dark:bg-slate-800/30 border-b border-slate-100 dark:border-slate-800 no-scrollbar">
+                        {tabs.map(t => (
+                            <TabBtn key={t.id} {...t} active={activeTab === t.id} onClick={() => setActiveTab(t.id)} />
+                        ))}
+                    </div>
+                    {/* Tab content */}
+                    <div className={cn("p-5", !visit.is_active && "opacity-60 pointer-events-none")}>
+                        <AnimatePresence mode="wait">
+                            <motion.div
+                                key={activeTab}
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0, y: -8 }}
+                                transition={{ duration: 0.2 }}
                             >
-                                {isDischarging ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
-                                Discharge
-                            </button>
-                        </div>
-                    ) : onDischarge ? (
-                        <div className="rounded-2xl overflow-hidden border border-blue-100 dark:border-blue-900/50 shadow-sm animate-in slide-in-from-bottom-2 duration-300">
-                            <div className="bg-gradient-to-r from-blue-600 to-indigo-700 p-4 sm:px-5 flex items-center gap-3">
-                                <div className="h-9 w-9 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-                                    <CheckCircle2 className="h-5 w-5 text-white" />
-                                </div>
-                                <div>
-                                    <p className="font-bold text-white leading-tight">Patient Discharged</p>
-                                    <p className="text-blue-100 text-xs">Schedule a follow-up or finalize the token.</p>
-                                </div>
-                            </div>
-                            <div className="bg-card p-4 sm:px-5 space-y-4">
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    <div className="space-y-1.5">
-                                        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Follow-up Date</label>
-                                        <Input
-                                            type="date"
-                                            value={followupDate}
-                                            onChange={e => setFollowupDate(e.target.value)}
-                                            min={new Date().toISOString().split("T")[0]}
-                                            className="h-9 text-sm rounded-lg"
-                                        />
-                                    </div>
-                                    <div className="space-y-1.5">
-                                        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Reason / Instructions</label>
-                                        <Input
-                                            value={followupReason}
-                                            onChange={e => setFollowupReason(e.target.value)}
-                                            placeholder="e.g. Review blood test results..."
-                                            className="h-9 text-sm rounded-lg"
-                                        />
-                                    </div>
-                                </div>
-                                <div className="flex flex-col sm:flex-row gap-3 pt-2 border-t">
-                                    <button
-                                        onClick={() => onDischarge("Completed")}
-                                        className="sm:flex-1 h-10 px-4 rounded-xl border border-input text-sm font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
-                                    >
-                                        Skip &amp; Mark Completed
-                                    </button>
-                                    <button
-                                        disabled={!followupDate || !followupReason || isSavingFollowup}
-                                        onClick={handleFollowupSave}
-                                        className="sm:flex-1 h-10 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold flex items-center justify-center gap-2 shadow-[0_2px_8px_rgba(5,150,105,0.3)] transition-all"
-                                    >
-                                        {isSavingFollowup ? <Loader2 className="h-4 w-4 animate-spin" /> : <CalendarPlus className="h-4 w-4" />}
-                                        Save Follow-up &amp; Complete
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    ) : null}
+                                {activeTab === "diagnosis"  && <DiagnosisTab  opdId={opdId} hospitalId={hospitalId} diagnoses={clinical.diagnoses}   dispatch={dispatch} />}
+                                {activeTab === "tests"      && <TestsTab      opdId={opdId} hospitalId={hospitalId} tests={clinical.tests}             dispatch={dispatch} />}
+                                {activeTab === "procedures" && <ProceduresTab opdId={opdId} hospitalId={hospitalId} procedures={clinical.procedures}   dispatch={dispatch} />}
+                                {activeTab === "medicines"  && <PrescriptionTab opdId={opdId} doctorId={doctorId || visit.doctor_id} hospitalId={hospitalId} medicines={clinical.medicines} dispatch={dispatch} />}
+                            </motion.div>
+                        </AnimatePresence>
+                    </div>
                 </div>
+
+                {/* Back to Queue button (non-discharge) */}
+                {onDone && visit.is_active && (
+                    <button
+                        onClick={onDone}
+                        className="w-full h-10 rounded-xl border-2 border-dashed border-slate-200 dark:border-slate-700 text-slate-500 text-sm font-semibold hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-all flex items-center justify-center gap-2"
+                    >
+                        ← Back to Queue (OPD stays active)
+                    </button>
+                )}
             </div>
-        </>
+
+            {/* ── RIGHT (col-span-3) ── */}
+            <div className="col-span-12 lg:col-span-3">
+                <LiveSummaryPanel
+                    clinical={clinical}
+                    isActive={visit.is_active !== false}
+                    isDischarging={isDischarging}
+                    opdNo={visit.opd_no}
+                    patientName={visit.patients?.users_patients_user_idTousers?.full_name || "Patient"}
+                    complaint={complaint}
+                    notes={notes}
+                    onDischarge={handleDischarge}
+                    onPrint={generatePrescriptionPDF}
+                    onScheduleFollowup={!visit.is_active ? () => setShowFollowup(true) : undefined}
+                />
+            </div>
+
+            {/* Follow-up Dialog */}
+            <Dialog open={showFollowup} onOpenChange={setShowFollowup}>
+                <DialogContent className="max-w-sm rounded-2xl">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2 text-base font-bold">
+                            <CalendarPlus className="h-4 w-4 text-blue-500" />
+                            Schedule Follow-up
+                        </DialogTitle>
+                        <DialogDescription className="text-sm text-muted-foreground">
+                            Patient has been discharged. Schedule a follow-up if needed.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-3 py-1">
+                        <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Follow-up Date</label>
+                            <Input type="date" value={followupDate} onChange={e => setFollowupDate(e.target.value)}
+                                min={new Date().toISOString().split("T")[0]} className="h-10 rounded-xl" />
+                        </div>
+                        <div className="space-y-1.5">
+                            <label className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Reason</label>
+                            <Input value={followupReason} onChange={e => setFollowupReason(e.target.value)}
+                                placeholder="e.g. Review blood test results..." className="h-10 rounded-xl" />
+                        </div>
+                    </div>
+                    <DialogFooter className="gap-2">
+                        <button onClick={() => { setShowFollowup(false); onDischarge?.("Completed"); }}
+                            className="flex-1 h-10 rounded-xl border border-input text-sm font-semibold text-muted-foreground hover:bg-muted transition-all">
+                            Skip
+                        </button>
+                        <button
+                            disabled={!followupDate || !followupReason || isSavingFollowup}
+                            onClick={handleFollowupSave}
+                            className="flex-1 h-10 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-sm font-bold flex items-center justify-center gap-2 transition-all">
+                            {isSavingFollowup ? <><Loader2 className="h-4 w-4 animate-spin" /> Saving...</> : <><CalendarPlus className="h-4 w-4" /> Save Follow-up</>}
+                        </button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+        </motion.div>
     );
 }

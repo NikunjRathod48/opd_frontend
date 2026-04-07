@@ -71,7 +71,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                             <p className="font-semibold text-sm leading-tight tracking-wide">
                                 {toast.type === "success" ? "Success" : toast.type === "error" ? "Error" : toast.type === "info" ? "Note" : "Loading"}
                             </p>
-                            <p className="text-xs opacity-90 truncate mt-1 font-medium">{toast.message}</p>
+                            <p className="text-xs opacity-90 mt-1 font-medium break-words leading-relaxed">{toast.message}</p>
                         </div>
 
                         {/* Dismiss Button */}

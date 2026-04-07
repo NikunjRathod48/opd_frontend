@@ -170,6 +170,7 @@ export interface Appointment {
     doctorName?: string;
     type?: string;
     appointmentno?: string;
+    token_number?: number;
 }
 
 export interface OPDVisit {
@@ -325,6 +326,7 @@ interface DataContextType {
     deleteDoctor: (id: string) => void;
     addAppointment: (a: any) => void;
     updateAppointment: (id: string, a: Partial<Appointment>) => void;
+    checkInAppointment: (appointmentId: string | number) => Promise<any>;
     deleteAppointment: (id: string) => void;
     updateOPDVisit: (id: string, d: Partial<OPDVisit>) => void;
     addReceipt: (r: any) => void;
@@ -616,7 +618,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
             const data = await import("@/lib/api").then(m => m.api.get<any[]>(url));
             const mappedReceipts: Receipt[] = data.map(b => {
                 // Get payment mode name from the payments → payment_modes relation
-                const successPayments = (b.payments || []).filter((p: any) => p.payment_status === 'Success');
+                const successPayments = (b.payments || []).filter((p: any) => p.payment_status === 'Success' && p.payment_mode_id !== 6);
                 const latestPayment = successPayments.length > 0 ? successPayments[successPayments.length - 1] : null;
                 const modeName = latestPayment?.payment_modes?.payment_mode_name || b.paymentModeName || 'Cash';
                 const modeId = latestPayment?.payment_mode_id?.toString() || '1';
@@ -955,6 +957,18 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
+    const checkInAppointment = async (appointmentId: string | number) => {
+        try {
+            const result = await import("@/lib/api").then(m => m.api.post<any>(`/appointments/check-in/${appointmentId}`, {}));
+            // Refresh to get updated status and tokens
+            fetchAppointments();
+            return result; // Result contains the newly generated token from backend
+        } catch (error: any) {
+            console.error("Check-In Error:", error);
+            throw new Error(error.message || "Failed to check-in appointment");
+        }
+    };
+
     const updateOPDVisit = async (id: string, d: Partial<OPDVisit>) => {
         try {
             const payload: any = {};
@@ -1171,7 +1185,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         addTreatmentType, updateTreatmentType, deleteTreatmentType,
         addSubTreatmentType, updateSubTreatmentType, deleteSubTreatmentType,
         addPatient, updatePatient,
-        addAppointment, updateAppointment, deleteAppointment,
+        addAppointment, updateAppointment, checkInAppointment, deleteAppointment,
         updateOPDVisit, addReceipt, updateReceipt,
         updateHospital, deleteHospital,
         fetchHospitalGroups,

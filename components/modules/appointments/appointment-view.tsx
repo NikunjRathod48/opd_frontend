@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -12,14 +12,12 @@ import { useData, Appointment } from "@/context/data-context";
 import { useAuth, UserRole } from "@/context/auth-context";
 import { RoleGuard } from "@/components/auth/role-guard";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { CustomDropdown } from "@/components/ui/custom-dropdown";
+
 import { DatePicker } from "@/components/ui/date-picker";
 import { TimePicker } from "@/components/ui/time-picker";
 import { Tooltip } from "@/components/ui/tooltip";
 import { PatientBookingModal } from "./patient-booking-modal";
-import {
-    Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
-} from "@/components/ui/dialog";
+import { AdminBookingModal } from "./admin-booking-modal";
 import {
     Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
 } from "@/components/ui/sheet";
@@ -54,7 +52,7 @@ export function AppointmentView({
 }: AppointmentViewProps) {
     const { addToast } = useToast();
     const { user } = useAuth();
-    const { appointments, doctors, patients, addAppointment, updateAppointment, fetchAppointments } = useData();
+    const { appointments, doctors, patients, addAppointment, updateAppointment, checkInAppointment, fetchAppointments } = useData();
 
     // --- UI State ---
     const [searchQuery, setSearchQuery] = useState("");
@@ -65,6 +63,7 @@ export function AppointmentView({
     const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
     const [isEditing, setIsEditing] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [checkingIn, setCheckingIn] = useState<Record<string, boolean>>({});
     const [isLoading, setIsLoading] = useState(true);
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPage = 8;
@@ -82,10 +81,7 @@ export function AppointmentView({
     const [editDate, setEditDate] = useState("");
     const [editTime, setEditTime] = useState("");
 
-    // --- Form State (admin booking) ---
-    const [formData, setFormData] = useState({
-        patientId: "", doctorId: "", date: "", time: "", type: "Consultation"
-    });
+
 
     // --- Initial fetch ---
     useEffect(() => {
@@ -172,6 +168,20 @@ export function AppointmentView({
         addToast(`Appointment marked as ${status}`, "info");
     };
 
+    const handleCheckIn = async (appointmentId: string) => {
+        if (!canManageStatus) return;
+        setCheckingIn(p => ({ ...p, [appointmentId]: true }));
+        try {
+            const result = await checkInAppointment?.(appointmentId);
+            const tokenMsg = result?.token_number ? ` Token #${result.token_number}` : '';
+            addToast(`Patient checked-in successfully.${tokenMsg}`, "success");
+        } catch (error: any) {
+            addToast(error.message || "Failed to check-in", "error");
+        } finally {
+            setCheckingIn(p => ({ ...p, [appointmentId]: false }));
+        }
+    };
+
     const handleReschedule = () => {
         if (!selectedAppointment || !editDate || !editTime) return;
         updateAppointment(selectedAppointment.appointmentid, {
@@ -182,26 +192,7 @@ export function AppointmentView({
         addToast("Appointment rescheduled", "success");
     };
 
-    const handleAdminBooking = async (e: React.FormEvent) => {
-        e.preventDefault();
-        const doctor = doctors.find(d => String(d.doctorid) === String(formData.doctorId));
-        const patientObj = patients.find(p => String(p.patientid) === String(formData.patientId));
-        try {
-            await addAppointment({
-                hospitalid: doctor?.hospitalid,
-                patientid: formData.patientId,
-                doctorid: formData.doctorId,
-                date: formData.date,
-                time: formData.time,
-                type: formData.type,
-            });
-            addToast("Appointment scheduled!", "success");
-            setIsAddModalOpen(false);
-            setFormData({ patientId: "", doctorId: "", date: "", time: "", type: "Consultation" });
-        } catch (err: any) {
-            addToast(err.message || "Failed to book appointment", "error");
-        }
-    };
+
 
     const resetFilters = () => {
         setPendingDoctorFilter(""); setPendingPatientFilter(""); setPendingDateStart(""); setPendingDateEnd("");
@@ -531,33 +522,64 @@ export function AppointmentView({
                                         </div>
 
                                         {/* Actions */}
-                                        <div className="col-span-3 sm:col-span-2 md:col-span-1 flex justify-end gap-1">
-                                            <Tooltip content="View Details" side="top">
-                                                <Button
-                                                    size="icon"
-                                                    variant="ghost"
-                                                    className="h-8 w-8 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary"
-                                                    onClick={() => { setSelectedAppointment(apt); setIsEditing(false); }}
-                                                >
-                                                    <CalendarDays className="h-4 w-4" />
-                                                </Button>
-                                            </Tooltip>
-                                            {canManageStatus && apt.status !== 'Completed' && apt.status !== 'Cancelled' && (
-                                                <Tooltip content="Manage" side="top">
+                                        <div className="col-span-3 sm:col-span-2 md:col-span-1 flex justify-end gap-1 items-center">
+                                            {apt.status === 'Checked-In' && apt.token_number && (
+                                                <span className="text-blue-600 dark:text-blue-400 text-[10px] font-bold mr-1 bg-blue-100 dark:bg-blue-900/60 px-2 py-1 rounded-md whitespace-nowrap hidden lg:block">
+                                                    Token #{apt.token_number}
+                                                </span>
+                                            )}
+
+                                            {canManageStatus && apt.status === 'Scheduled' && getApptDate(apt.appointmentdatetime) === new Date().toISOString().split('T')[0] ? (
+                                                <>
                                                     <Button
-                                                        size="icon"
-                                                        variant="ghost"
-                                                        className="h-8 w-8 rounded-lg hover:bg-amber-50 text-muted-foreground hover:text-amber-600"
-                                                        onClick={() => {
-                                                            setSelectedAppointment(apt);
-                                                            setIsEditing(true);
-                                                            setEditDate(getApptDate(apt.appointmentdatetime));
-                                                            setEditTime(apt.appointmentdatetime.split('T')[1]?.substring(0, 5) || "");
-                                                        }}
+                                                        size="sm"
+                                                        className="h-8 px-3 text-xs shadow-sm bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-90"
+                                                        disabled={checkingIn[apt.appointmentid]}
+                                                        onClick={() => handleCheckIn(apt.appointmentid)}
                                                     >
-                                                        <Pencil className="h-3.5 w-3.5" />
+                                                        {checkingIn[apt.appointmentid] ? <Loader2 className="h-3 w-3 animate-spin" /> : "Check-In"}
                                                     </Button>
-                                                </Tooltip>
+                                                    <Tooltip content="View Details" side="top">
+                                                        <Button
+                                                            size="icon"
+                                                            variant="ghost"
+                                                            className="h-8 w-8 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary"
+                                                            onClick={() => { setSelectedAppointment(apt); setIsEditing(false); }}
+                                                        >
+                                                            <CalendarDays className="h-4 w-4" />
+                                                        </Button>
+                                                    </Tooltip>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Tooltip content="View Details" side="top">
+                                                        <Button
+                                                            size="icon"
+                                                            variant="ghost"
+                                                            className="h-8 w-8 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary"
+                                                            onClick={() => { setSelectedAppointment(apt); setIsEditing(false); }}
+                                                        >
+                                                            <CalendarDays className="h-4 w-4" />
+                                                        </Button>
+                                                    </Tooltip>
+                                                    {canManageStatus && apt.status !== 'Completed' && apt.status !== 'Cancelled' && (
+                                                        <Tooltip content="Manage" side="top">
+                                                            <Button
+                                                                size="icon"
+                                                                variant="ghost"
+                                                                className="h-8 w-8 rounded-lg hover:bg-amber-50 text-muted-foreground hover:text-amber-600"
+                                                                onClick={() => {
+                                                                    setSelectedAppointment(apt);
+                                                                    setIsEditing(true);
+                                                                    setEditDate(getApptDate(apt.appointmentdatetime));
+                                                                    setEditTime(apt.appointmentdatetime.split('T')[1]?.substring(0, 5) || "");
+                                                                }}
+                                                            >
+                                                                <Pencil className="h-3.5 w-3.5" />
+                                                            </Button>
+                                                        </Tooltip>
+                                                    )}
+                                                </>
                                             )}
                                         </div>
                                     </motion.div>
@@ -776,37 +798,9 @@ export function AppointmentView({
                 <PatientBookingModal open={isPatientModalOpen} onOpenChange={setIsPatientModalOpen} />
             )}
 
-            {/* ── Admin/Receptionist Booking Dialog ── */}
+            {/* ── Admin/Receptionist Booking Modal ── */}
             {isAdminOrRecep && (
-                <Dialog open={isAddModalOpen} onOpenChange={setIsAddModalOpen}>
-                    <DialogContent className="max-w-[95vw] sm:max-w-[480px] w-full rounded-2xl border-none p-6 gap-4 shadow-2xl">
-                        <DialogHeader>
-                            <DialogTitle className="text-xl font-bold tracking-tight text-primary">Schedule Appointment</DialogTitle>
-                            <DialogDescription>Enter details to book a new appointment.</DialogDescription>
-                        </DialogHeader>
-                        <form onSubmit={handleAdminBooking} className="space-y-4 pt-2">
-                            <div className="space-y-1.5">
-                                <Label className="text-xs font-bold text-muted-foreground uppercase">Patient</Label>
-                                <SearchableSelect options={patientOptions} value={formData.patientId} onChange={v => setFormData(f => ({ ...f, patientId: v }))} placeholder="Select Patient" className="h-10" />
-                            </div>
-                            <div className="space-y-1.5">
-                                <Label className="text-xs font-bold text-muted-foreground uppercase">Doctor</Label>
-                                <SearchableSelect options={doctorOptions} value={formData.doctorId} onChange={v => setFormData(f => ({ ...f, doctorId: v }))} placeholder="Select Doctor" className="h-10" />
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-1.5">
-                                    <Label className="text-xs font-bold text-muted-foreground uppercase">Date</Label>
-                                    <DatePicker value={formData.date} onChange={v => setFormData(f => ({ ...f, date: v }))} placeholder="Select date" className="w-full h-10" minDate={new Date().toISOString().split('T')[0]} />
-                                </div>
-                                <div className="space-y-1.5">
-                                    <Label className="text-xs font-bold text-muted-foreground uppercase">Time</Label>
-                                    <TimePicker value={formData.time} onChange={v => setFormData(f => ({ ...f, time: v }))} containerClassName="w-full" />
-                                </div>
-                            </div>
-                            <Button type="submit" className="w-full text-white shadow-md h-10 text-base font-medium">Confirm Booking</Button>
-                        </form>
-                    </DialogContent>
-                </Dialog>
+                <AdminBookingModal open={isAddModalOpen} onOpenChange={setIsAddModalOpen} />
             )}
         </RoleGuard>
     );

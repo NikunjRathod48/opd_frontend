@@ -8,9 +8,9 @@ export default function proxy(request: NextRequest) {
     const publicRoutes = ['/', '/auth/login', '/auth/register', '/about', '/contact'];
 
     // Check if the current path is a public route
-    const isPublicRoute = publicRoutes.some(route =>
-        pathname === route || pathname.startsWith('/auth/')
-    );
+    const isPublicRoute =
+        publicRoutes.some(route => pathname === route || pathname.startsWith('/auth/')) ||
+        pathname.startsWith('/tv-display'); // TV display: no login required
 
     // Get the user cookie
     const userCookie = request.cookies.get('medcore_user');

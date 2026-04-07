@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useData } from "@/context/data-context";
@@ -11,9 +11,15 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { useToast } from "@/components/ui/toast";
 import {
     Loader2, Calendar as CalendarIcon, Clock, ChevronRight,
-    CheckCircle2, Stethoscope, X, ArrowLeft, Sparkles, User2, MapPin
+    CheckCircle2, Stethoscope, X, ArrowLeft, Sparkles, User2, Zap
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+    isSlotDisabled,
+    findFirstAvailableSlotIndex,
+    formatTime12Hour,
+    type DoctorAvailability,
+} from "@/lib/appointment-utils";
 
 interface PatientBookingModalProps {
     open: boolean;
@@ -70,6 +76,49 @@ export function PatientBookingModal({ open, onOpenChange }: PatientBookingModalP
 
     const activeDoctor = doctors.find(d => d.doctorid === selectedDoctor);
 
+    // ── Doctor availability window ───────────────────────────────────────────
+    const doctorAvailability: DoctorAvailability | undefined = useMemo(() => {
+        const schedule = (activeDoctor as any)?.schedule;
+        if (!schedule || !Array.isArray(schedule)) return undefined;
+        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        const selectedDayName = selectedDate
+            ? dayNames[new Date(selectedDate + "T00:00:00").getDay()]
+            : undefined;
+        const entry = selectedDayName
+            ? schedule.find((s: any) => s.day === selectedDayName && s.is_available)
+            : undefined;
+        if (!entry) return undefined;
+        return { start: entry.start_time, end: entry.end_time };
+    }, [activeDoctor, selectedDate]);
+
+    // ── Auto-scroll to first available slot ──────────────────────────────────
+    const firstAvailableRef = useRef<HTMLButtonElement | null>(null);
+
+    const scrollToFirstAvailable = useCallback(() => {
+        if (firstAvailableRef.current) {
+            firstAvailableRef.current.scrollIntoView({
+                behavior: "smooth",
+                block: "nearest",
+            });
+        }
+    }, []);
+
+    useEffect(() => {
+        if (availableSlots.length > 0 && !loadingSlots) {
+            const timer = setTimeout(scrollToFirstAvailable, 120);
+            return () => clearTimeout(timer);
+        }
+    }, [availableSlots, loadingSlots, scrollToFirstAvailable]);
+
+    const firstAvailableIdx = useMemo(
+        () => findFirstAvailableSlotIndex(availableSlots, selectedDate, doctorAvailability),
+        [availableSlots, selectedDate, doctorAvailability]
+    );
+
+    const formatDate = (d: string) => new Date(d).toLocaleDateString(undefined, {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+    });
+
     const canProceed =
         (step === 0 && !!selectedDoctor) ||
         (step === 1 && !!selectedDate) ||
@@ -108,10 +157,6 @@ export function PatientBookingModal({ open, onOpenChange }: PatientBookingModalP
             setIsSubmitting(false);
         }
     };
-
-    const formatDate = (d: string) => new Date(d).toLocaleDateString(undefined, {
-        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-    });
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -268,7 +313,7 @@ export function PatientBookingModal({ open, onOpenChange }: PatientBookingModalP
                                     <div className="flex-1 min-w-0">
                                         <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">Already Booked</p>
                                         <p className="text-xs text-amber-700 dark:text-amber-300/80 mt-0.5">
-                                            You have an appointment with this doctor at <span className="font-bold">{existingAppointment.time}</span> ({existingAppointment.status}).
+                                            You have an appointment with this doctor at <span className="font-bold">{formatTime12Hour(existingAppointment.time)}</span> ({existingAppointment.status}).
                                         </p>
                                         <Button variant="outline" size="sm" className="mt-2.5 h-7 text-xs border-amber-300 dark:border-amber-700 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/40" onClick={() => setStep(1)}>
                                             Pick Another Date
@@ -286,31 +331,68 @@ export function PatientBookingModal({ open, onOpenChange }: PatientBookingModalP
                                 </div>
                             ) : availableSlots.length > 0 ? (
                                 <>
-                                    <p className="text-xs text-muted-foreground">{availableSlots.filter(s => !s.isFull).length} slots available</p>
+                                    <div className="flex items-center justify-between">
+                                        <p className="text-xs text-muted-foreground">
+                                            {availableSlots.filter((s) =>
+                                                !s.isFull && !isSlotDisabled(s.time, selectedDate, doctorAvailability)
+                                            ).length} slots available
+                                        </p>
+                                        {firstAvailableIdx >= 0 && (
+                                            <button
+                                                onClick={scrollToFirstAvailable}
+                                                className="flex items-center gap-1 text-[10px] font-medium text-primary hover:underline"
+                                            >
+                                                <Zap className="h-3 w-3" />
+                                                Next available
+                                            </button>
+                                        )}
+                                    </div>
                                     <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                                         {availableSlots.map((slot, idx) => {
                                             const isSelected = selectedSlot?.time === slot.time;
+                                            const disabled = slot.isFull ||
+                                                isSlotDisabled(slot.time, selectedDate, doctorAvailability);
+                                            const isNextAvailable = idx === firstAvailableIdx;
+
                                             return (
                                                 <button
                                                     key={idx}
-                                                    disabled={slot.isFull}
-                                                    onClick={() => setSelectedSlot(slot)}
+                                                    ref={isNextAvailable ? firstAvailableRef : null}
+                                                    disabled={disabled}
+                                                    onClick={() => !disabled && setSelectedSlot(slot)}
                                                     className={cn(
-                                                        "flex flex-col items-center justify-center py-3 px-2 rounded-xl border text-center transition-all duration-200",
-                                                        slot.isFull
+                                                        "relative flex flex-col items-center justify-center py-3 px-2 rounded-xl border text-center transition-all duration-200",
+                                                        disabled
                                                             ? "opacity-40 cursor-not-allowed bg-muted/30 border-border/40"
                                                             : isSelected
                                                                 ? "cursor-pointer bg-primary text-primary-foreground border-primary shadow-md shadow-primary/20 scale-[1.03]"
-                                                                : "cursor-pointer bg-card border-border hover:border-primary/50 hover:bg-primary/5 hover:scale-[1.02]"
+                                                                : isNextAvailable
+                                                                    ? "cursor-pointer bg-card border-primary/50 ring-2 ring-primary/30 ring-offset-1 hover:bg-primary/5 hover:scale-[1.02]"
+                                                                    : "cursor-pointer bg-card border-border hover:border-primary/50 hover:bg-primary/5 hover:scale-[1.02]"
                                                     )}
                                                 >
-                                                    <span className={cn("text-sm font-bold tabular-nums", isSelected ? "text-white" : "")}>{slot.time}</span>
+                                                    {isNextAvailable && !isSelected && (
+                                                        <span className="absolute -top-2 left-1/2 -translate-x-1/2 text-[9px] font-bold text-primary bg-primary/10 px-1.5 py-0.5 rounded-full leading-none whitespace-nowrap">
+                                                            Next
+                                                        </span>
+                                                    )}
+                                                    <span className={cn(
+                                                        "text-sm font-bold tabular-nums",
+                                                        isSelected ? "text-white" : ""
+                                                    )}>
+                                                        {formatTime12Hour(slot.time)}
+                                                    </span>
                                                     <span className={cn(
                                                         "text-[10px] mt-1 font-medium",
-                                                        slot.isFull ? "text-red-500" :
-                                                        isSelected ? "text-white/70" : "text-muted-foreground"
+                                                        disabled
+                                                            ? slot.isFull ? "text-red-400" : "text-muted-foreground/50"
+                                                            : isSelected ? "text-white/70" : "text-muted-foreground"
                                                     )}>
-                                                        {slot.isFull ? "Full" : `${slot.booked}/${slot.capacity}`}
+                                                        {slot.isFull
+                                                            ? "Full"
+                                                            : disabled
+                                                                ? "Passed"
+                                                                : `${slot.booked}/${slot.capacity}`}
                                                     </span>
                                                 </button>
                                             );
@@ -382,7 +464,7 @@ export function PatientBookingModal({ open, onOpenChange }: PatientBookingModalP
                                     </div>
                                     <div>
                                         <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider mb-0.5">Time Slot</p>
-                                        <p className="font-bold text-xl tabular-nums">{selectedSlot?.time}</p>
+                                        <p className="font-bold text-xl tabular-nums">{selectedSlot ? formatTime12Hour(selectedSlot.time) : ''}</p>
                                     </div>
                                     <div className="ml-auto text-right">
                                         <p className="text-xs text-muted-foreground">Capacity</p>

@@ -11,7 +11,8 @@ import { useSocket } from "@/context/socket-context";
 import { cn } from "@/lib/utils";
 import {
     Plus, Activity, Hash, RefreshCw, Users, XCircle,
-    ChevronRight, Stethoscope, User, Search, UserPlus, Loader2, RotateCcw
+    ChevronRight, Stethoscope, User, Search, UserPlus, Loader2, RotateCcw,
+    AlertTriangle
 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { SearchableSelect } from "@/components/ui/searchable-select";
@@ -83,6 +84,9 @@ function IssueTokenModal({ open, onClose, queue, hospitalGroupId, onIssued }: Is
     const [isSearching, setIsSearching] = useState(false);
     const [selectedPatient, setSelectedPatient] = useState<PatientSearchResult | null>(null);
 
+    // Emergency Toggle
+    const [isEmergency, setIsEmergency] = useState(false);
+
     // Tab 3: Walk-in (React Hook Form)
     const { bloodGroups, states, getCities } = useData();
     const [formCityList, setFormCityList] = useState<any[]>([]);
@@ -130,6 +134,7 @@ function IssueTokenModal({ open, onClose, queue, hospitalGroupId, onIssued }: Is
     const reset = () => {
         setTab("existingopd"); setSelectedOpdId(""); setPatientQ(""); setPatientResults([]);
         setSelectedPatient(null); resetForm({ gender: "Male" });
+        setIsEmergency(false);
     };
 
     const handleClose = () => { reset(); onClose(); };
@@ -138,10 +143,17 @@ function IssueTokenModal({ open, onClose, queue, hospitalGroupId, onIssued }: Is
         setIsSubmitting(true);
         try {
             let opdIdToLink: number | null = null;
+            let priority = isEmergency ? "High" : "Normal";
+            let status = "Waiting";
 
             if (tab === "existingopd") {
                 // Link to existing OPD visit
-                opdIdToLink = (selectedOpdId && selectedOpdId !== "emergency_walkin") ? Number(selectedOpdId) : null;
+                if (selectedOpdId === "emergency_walkin") {
+                    priority = "High";
+                    status = "Waiting";
+                } else if (selectedOpdId) {
+                    opdIdToLink = Number(selectedOpdId);
+                }
             } else if (tab === "patient" && selectedPatient) {
                 // Create new OPD for existing patient with this doctor
                 const opd = await opdService.createVisit({
@@ -153,7 +165,7 @@ function IssueTokenModal({ open, onClose, queue, hospitalGroupId, onIssued }: Is
             }
 
             // Issue token (with or without opd_id)
-            await queuesService.generateToken(queue.daily_queue_id, opdIdToLink);
+            await queuesService.generateToken(queue.daily_queue_id, opdIdToLink, priority, status);
             addToast("Token issued!", "success");
             handleClose();
             onIssued();
@@ -183,7 +195,8 @@ function IssueTokenModal({ open, onClose, queue, hospitalGroupId, onIssued }: Is
             });
 
             // Issue token
-            await queuesService.generateToken(queue.daily_queue_id, opd.opd_id);
+            let priority = isEmergency ? "High" : "Normal";
+            await queuesService.generateToken(queue.daily_queue_id, opd.opd_id, priority, "Waiting");
             addToast("Walk-in patient registered and Token issued!", "success");
             handleClose();
             onIssued();
@@ -422,18 +435,33 @@ function IssueTokenModal({ open, onClose, queue, hospitalGroupId, onIssued }: Is
                     )}
                 </div>
 
-                <DialogFooter>
-                    <Button variant="outline" onClick={handleClose}>Cancel</Button>
-                    {tab !== "walkin" && (
-                        <Button className="text-white" disabled={isSubmitting ||
-                            (tab === "existingopd" && !selectedOpdId) ||
-                            (tab === "patient" && !selectedPatient)}
-                            onClick={handleIssue}>
-                            {isSubmitting ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Issuing...</> :
-                                tab === "existingopd" ? (selectedOpdId === "emergency_walkin" ? "Issue Emergency Token" : "Issue Token with OPD") :
-                                    "Create OPD & Issue Token"}
-                        </Button>
-                    )}
+                <DialogFooter className="flex items-center justify-between sm:justify-between w-full mt-4 border-t pt-4">
+                    <div className="flex items-center gap-2">
+                        <input
+                            type="checkbox"
+                            id="emergency-toggle"
+                            checked={isEmergency}
+                            onChange={(e) => setIsEmergency(e.target.checked)}
+                            className="h-4 w-4 text-red-600 rounded border-gray-300 focus:ring-red-500 cursor-pointer"
+                        />
+                        <label htmlFor="emergency-toggle" className="text-sm font-bold text-red-600 flex items-center gap-1.5 cursor-pointer select-none">
+                            <AlertTriangle className="h-4 w-4" />
+                            Mark as Emergency
+                        </label>
+                    </div>
+                    <div className="flex gap-2">
+                        <Button variant="outline" onClick={handleClose}>Cancel</Button>
+                        {tab !== "walkin" && (
+                            <Button className="text-white" disabled={isSubmitting ||
+                                (tab === "existingopd" && !selectedOpdId) ||
+                                (tab === "patient" && !selectedPatient)}
+                                onClick={handleIssue}>
+                                {isSubmitting ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Issuing...</> :
+                                    tab === "existingopd" ? (selectedOpdId === "emergency_walkin" ? "Issue Emergency Token" : "Issue Token with OPD") :
+                                        "Create OPD & Issue Token"}
+                            </Button>
+                        )}
+                    </div>
                 </DialogFooter>
             </DialogContent>
         </Dialog>
@@ -631,8 +659,23 @@ export function ReceptionistQueueView() {
                                     </div>
                                 ) : tokens.map(token => {
                                     const cfg = TOKEN_STATUS_CONFIG[token.status] || TOKEN_STATUS_CONFIG["Waiting"];
-                                    const patientName = token.opd_visits?.patients?.users_patients_user_idTousers?.full_name;
-                                    const opdNo = token.opd_visits?.opd_no || (token.opd_visits as any)?.opdno;
+
+                                    const t = token as any;
+                                    const isAppointment = t.visit_type === "Appointment" || !!t.appointment_id;
+                                    const tokenType = t.visit_type === "Return" ? "Return" : (isAppointment ? "Appointment" : "Walk-in");
+
+                                    let patientName = "Walk-in Patient";
+                                    let phoneNumber = "";
+                                    let opdNo = t.opd_visits?.opd_no || t.opd_visits?.opdno || "";
+
+                                    if (isAppointment && t.appointments?.patients) {
+                                        patientName = t.appointments.patients.users_patients_user_idTousers?.full_name || "Unknown Patient";
+                                        phoneNumber = t.appointments.patients.phone_number || "";
+                                    } else if (t.opd_visits?.patients) {
+                                        patientName = t.opd_visits.patients.users_patients_user_idTousers?.full_name || "Unknown Patient";
+                                        phoneNumber = t.opd_visits.patients.phone_number || "";
+                                    }
+
                                     return (
                                         <div key={token.token_id} className={cn(
                                             "flex items-center gap-4 bg-card border rounded-lg px-4 py-3 transition-all",
@@ -646,10 +689,17 @@ export function ReceptionistQueueView() {
                                                 {token.token_number}
                                             </div>
                                             <div className="flex-1 min-w-0">
-                                                <p className="font-medium text-sm truncate flex items-center gap-1.5">
-                                                    <User className="h-3 w-3 text-muted-foreground shrink-0" />
-                                                    {patientName || "Walk-in Patient"}
-                                                </p>
+                                                <div className="flex items-center gap-2">
+                                                    <p className="font-medium text-sm truncate flex items-center gap-1.5">
+                                                        <User className="h-3 w-3 text-muted-foreground shrink-0" />
+                                                        {patientName}
+                                                        {phoneNumber && <span className="text-muted-foreground font-normal text-xs ml-1">({phoneNumber})</span>}
+                                                    </p>
+                                                    {token.priority === "High" && <span className="bg-red-100 text-red-700 text-[8px] px-1.5 py-0 rounded font-bold uppercase tracking-widest border border-red-200">Emergency</span>}
+                                                    <Badge variant="outline" className={cn("text-[8px] px-1.5 py-0 h-4 border", isAppointment ? "bg-purple-50 text-purple-700 border-purple-200" : token.visit_type === "Return" ? "bg-indigo-50 text-indigo-700 border-indigo-200" : "bg-amber-50 text-amber-700 border-amber-200")}>
+                                                        {tokenType}
+                                                    </Badge>
+                                                </div>
                                                 <p className="text-xs text-muted-foreground flex items-center gap-1.5 mt-0.5">
                                                     {opdNo ? <><Stethoscope className="h-3 w-3 shrink-0" />{opdNo}</> : "No OPD linked"}
                                                     {" · "}

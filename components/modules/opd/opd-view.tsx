@@ -12,9 +12,10 @@ import {
     ChevronRight, FlaskConical, ClipboardList, LayoutList,
     CheckCircle2, AlertCircle, Hash, ChevronDown, SlidersHorizontal,
     TrendingUp, Users, Zap, ArrowUpRight, MoreHorizontal, HeartPulse,
-    Microscope, FileSignature, Syringe
+    Microscope, FileSignature, Syringe, ExternalLink
 } from "lucide-react";
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/toast";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -34,8 +35,9 @@ interface OPDViewProps {
     hospitalId?: string;
 }
 
-export function OPDView({ allowedRoles = ['HospitalAdmin', 'Doctor', 'Receptionist', 'Patient'], readOnly = false, hospitalId }: OPDViewProps) {
+export function OPDView({ allowedRoles = ['HospitalAdmin', 'Doctor', 'Patient'], readOnly = false, hospitalId }: OPDViewProps) {
     const { user } = useAuth();
+    const router = useRouter();
     const { opdVisits, updateOPDVisit, patients, specializations, doctors, subTreatments, addReceipt, diagnoses, medicines, tests, savePrescription, saveOpdTests, saveOpdProcedures, saveBill, getOpdDetails, fetchOPDVisits } = useData();
     const { addToast } = useToast();
 
@@ -529,6 +531,16 @@ export function OPDView({ allowedRoles = ['HospitalAdmin', 'Doctor', 'Receptioni
                                                     onClick={e => { e.stopPropagation(); openEditModal(visit); }}
                                                 >
                                                     <Pencil className="h-3.5 w-3.5" />
+                                                </button>
+                                            </Tooltip>
+                                        )}
+                                        {isDoctor && (
+                                            <Tooltip content="Open Visit Detail" side="left">
+                                                <button
+                                                    className="h-8 w-8 rounded-lg border border-border/60 bg-background flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/5 hover:border-primary/30 transition-all"
+                                                    onClick={e => { e.stopPropagation(); router.push(`/doctor/opd/${visit.opdid}`); }}
+                                                >
+                                                    <ExternalLink className="h-3.5 w-3.5" />
                                                 </button>
                                             </Tooltip>
                                         )}

@@ -51,12 +51,16 @@ import {
   ChevronRight,
   ChevronLeft,
   Wallet,
+  RefreshCw,
+  Lock,
 } from "lucide-react";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { useSocket } from "@/context/socket-context";
+import { useApi } from "@/hooks/use-api";
+import { Tooltip } from "@/components/ui/tooltip";
 
 interface BillingViewProps {
   allowedRoles?: UserRole[];
@@ -90,7 +94,6 @@ export function BillingView({
 }: BillingViewProps) {
   const { user } = useAuth();
   const {
-    receipts,
     patients,
     opdVisits,
     subTreatments,
@@ -99,7 +102,6 @@ export function BillingView({
     saveBill,
     updateBill,
     payBill,
-    fetchReceipts,
     getOpdDetails,
   } = useData();
   const { addToast } = useToast();
@@ -111,6 +113,73 @@ export function BillingView({
       ? user?.hospitalid
       : undefined);
 
+  // ── SWR data fetching ─────────────────────────────────────────────────────
+  const billingUrl = useMemo(() => {
+    if (!user) return null;
+    if (user.role === 'Patient') return `/billing?patient_user_id=${user.id}`;
+    if (['HospitalAdmin', 'Receptionist'].includes(user.role || '') && user.hospitalid) {
+      const hid = String(user.hospitalid).replace(/\D/g, '');
+      if (hid) return `/billing?hospital_id=${hid}`;
+    }
+    return '/billing';
+  }, [user]);
+
+  const { data: rawBillingData, isLoading: isLoadingReceipts, isValidating: isRefreshingReceipts, mutate: mutateReceipts } = useApi<any[]>(billingUrl);
+
+  // Map raw API data → Receipt[] (same logic as data-context fetchReceipts)
+  const receipts = useMemo<Receipt[]>(() => {
+    if (!Array.isArray(rawBillingData)) return [];
+    return rawBillingData.map(b => {
+      const successPayments = (b.payments || []).filter((p: any) => p.payment_status === 'Success');
+      const latestPayment = successPayments.length > 0 ? successPayments[successPayments.length - 1] : null;
+      const modeName = latestPayment?.payment_modes?.payment_mode_name || b.paymentModeName || 'Cash';
+      const modeId = latestPayment?.payment_mode_id?.toString() || '1';
+
+      let mappedStatus: Receipt['status'] = 'Pending';
+      if (b.payment_status === 'Paid') mappedStatus = 'Paid';
+      else if (b.payment_status === 'Partially Paid') mappedStatus = 'Partially Paid';
+      else if (b.payment_status === 'Insurance Pending') mappedStatus = 'Insurance Pending' as any;
+      else if (b.payment_status === 'Cancelled') mappedStatus = 'Cancelled';
+
+      return {
+        receiptid: b.bill_id.toString(),
+        hospitalid: b.hospital_id.toString(),
+        opdid: b.visit_id?.toString(),
+        receiptnumber: b.bill_number,
+        receiptdate: b.created_at,
+        subtotalamount: Number(b.subtotal_amount),
+        taxamount: Number(b.tax_amount),
+        totalamount: Number(b.total_amount),
+        paymentmodeid: modeId,
+        status: mappedStatus,
+        paidamount: successPayments.reduce((sum: number, p: any) => sum + Number(p.amount_paid), 0),
+        patientName: b.patientName || 'Unknown',
+        patientid: b.patientid?.toString() || '',
+        paymentModeName: modeName,
+        referenceNumber: latestPayment?.reference_number,
+        discountamount: Number(b.discount_amount) || 0,
+        items: b.bill_items?.map((item: any) => {
+          let refId = item.reference_id ? item.reference_id.toString() : '';
+          if (refId && !refId.includes('-')) {
+            if (item.item_type === 'Procedure') refId = `TRT-${refId}`;
+            else if (item.item_type === 'Test') refId = `TST-${refId}`;
+            else if (item.item_type === 'Medicine') refId = `MED-${refId}`;
+          } else if (!refId) {
+            refId = `CUSTOM-${item.bill_item_id}`;
+          }
+          return {
+            receiptitemid: item.bill_item_id.toString(),
+            subtreatmenttypeid: refId,
+            description: item.item_description,
+            qty: item.quantity,
+            rate: Number(item.unit_price),
+            amount: Number(item.total_price)
+          };
+        }) || []
+      };
+    });
+  }, [rawBillingData]);
+
   // UI state
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
@@ -120,7 +189,6 @@ export function BillingView({
   const [viewingReceipt, setViewingReceipt] = useState<Receipt | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [isLoadingReceipts, setIsLoadingReceipts] = useState(true);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentMode, setPaymentMode] = useState("1");
   const [referenceNumber, setReferenceNumber] = useState("");
@@ -141,22 +209,16 @@ export function BillingView({
   const [selectedPatientId, setSelectedPatientId] = useState<string>("");
   const [isFetchingItems, setIsFetchingItems] = useState(false);
 
-  // Fetch bill records on mount / when hospital context changes
-  useEffect(() => {
-    setIsLoadingReceipts(true);
-    fetchReceipts().finally(() => setIsLoadingReceipts(false));
-  }, [effectiveHospitalId]);
-
-  // Auto-refresh when a bill is created (e.g. auto-generated on discharge)
+  // Auto-refresh when a bill is created via WebSocket (e.g. auto-generated on discharge)
   useEffect(() => {
     if (!socket) return;
     const handleBillCreated = () => {
-      fetchReceipts();
+      mutateReceipts();
       addToast("New bill generated from discharge", "info");
     };
     socket.on("bill:created", handleBillCreated);
     return () => { socket.off("bill:created", handleBillCreated); };
-  }, [socket, fetchReceipts, addToast]);
+  }, [socket, mutateReceipts, addToast]);
 
   const canEdit = !readOnly &&
     ["SuperAdmin", "GroupAdmin", "HospitalAdmin", "Receptionist"].includes(user?.role || "");
@@ -206,6 +268,7 @@ export function BillingView({
       case "Paid": return { color: "bg-emerald-100 text-emerald-700 border-emerald-200", icon: <CheckCircle2 className="h-3 w-3" /> };
       case "Pending": return { color: "bg-amber-100 text-amber-700 border-amber-200", icon: <Clock className="h-3 w-3" /> };
       case "Partially Paid": return { color: "bg-blue-100 text-blue-700 border-blue-200", icon: <AlertCircle className="h-3 w-3" /> };
+      case "Insurance Pending": return { color: "bg-violet-100 text-violet-700 border-violet-200", icon: <Clock className="h-3 w-3" /> };
       case "Cancelled": return { color: "bg-rose-100 text-rose-700 border-rose-200", icon: <X className="h-3 w-3" /> };
       default: return { color: "bg-slate-100 text-slate-600 border-slate-200", icon: null };
     }
@@ -246,7 +309,7 @@ export function BillingView({
       paymentModeName: r.paymentModeName || "Cash",
       status: r.status,
       items: r.items || [],
-      taxRate: 0,
+      taxRate: (r.subtotalamount && r.subtotalamount > 0) ? Math.round((Number(r.taxamount) / Number(r.subtotalamount)) * 100 * 100) / 100 : 0,
       paidAmount: r.paidamount || 0,
       discountAmount: r.discountamount || 0,
     });
@@ -346,6 +409,7 @@ export function BillingView({
           items: mapItemsToPayload(formData.items),
         });
         addToast("Invoice updated", "success");
+        mutateReceipts();
       } else {
         const visit = opdVisits
           .filter((v) => v.patientid === selectedPatientId && v.status === "Active")
@@ -362,6 +426,7 @@ export function BillingView({
           items: mapItemsToPayload(formData.items),
         });
         addToast("Invoice created", "success");
+        mutateReceipts();
       }
       setIsFormOpen(false);
     } catch { addToast("Failed to save invoice", "error"); }
@@ -371,7 +436,8 @@ export function BillingView({
   // Pay handler
   const handlePay = async (r: Receipt) => {
     setViewingReceipt(r);
-    setPaymentAmount(String((r.totalamount || 0) - (r.paidamount || 0)));
+    const outstanding = Math.max(0, (r.totalamount || 0) - (r.paidamount || 0));
+    setPaymentAmount(String(outstanding));
     setPaymentMode("1");
     setReferenceNumber("");
     setIsPayOpen(true);
@@ -383,7 +449,7 @@ export function BillingView({
     if (!viewingReceipt) return;
 
     // Validation
-    if (selectedPaymentModeObj?.requiresReference && !referenceNumber.trim()) {
+    if (selectedPaymentModeObj?.requiresReference && paymentMode !== "6" && !referenceNumber.trim()) {
       addToast(`Reference ID/Transaction No is required for ${selectedPaymentModeObj.label}`, "error");
       return;
     }
@@ -392,49 +458,264 @@ export function BillingView({
     try {
       await payBill(viewingReceipt.receiptid, {
         payment_mode_id: Number(paymentMode),
-        amount_paid: Number(paymentAmount),
+        amount_paid: paymentMode === "6" ? 0 : Number(paymentAmount),
         reference_number: referenceNumber ? referenceNumber.trim() : undefined,
-        // Optional override: if insurance, maybe tag the receipt differently on backend
-        // For now, it records the payment type. The DB was modified to allow 'Insurance Pending'.
       });
-      addToast("Payment recorded successfully", "success");
+      addToast(paymentMode === "6" ? "Payment marked as Insurance Pending" : "Payment recorded successfully", "success");
+      mutateReceipts();
       setIsPayOpen(false);
       setViewingReceipt(null);
     } catch { addToast("Payment failed", "error"); }
     finally { setIsSaving(false); }
   };
 
-  // PDF export
+  // PDF export — premium hospital invoice layout
   const handleDownloadPDF = (r: Receipt) => {
-    const doc = new jsPDF();
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 15;
+
+    // ── Violet header bar ───────────────────────────────────────────────────
+    doc.setFillColor(109, 40, 217);
+    doc.rect(0, 0, pageW, 38, 'F');
+    doc.setFillColor(79, 70, 229);
+    doc.rect(pageW - 55, 0, 55, 38, 'F');
+
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(18);
-    doc.text("Invoice", 14, 22);
-    doc.setFontSize(11);
-    doc.text(`Bill No: ${r.receiptnumber}`, 14, 32);
-    doc.text(`Patient: ${r.patientName || ""}`, 14, 38);
-    doc.text(`Date: ${new Date(r.receiptdate).toLocaleDateString()}`, 14, 44);
-    autoTable(doc, {
-      startY: 52,
-      head: [["Description", "Qty", "Rate (₹)", "Amount (₹)"]],
-      body: (r.items || []).map((i) => [i.description, i.qty, i.rate.toFixed(2), i.amount.toFixed(2)]),
+    doc.setTextColor(255, 255, 255);
+    doc.text('HOSPITAL INVOICE', margin, 17);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(220, 210, 255);
+    doc.text('Tax Invoice / Receipt', margin, 24);
+    doc.text('OPD Management System', margin, 30);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(255, 255, 255);
+    doc.text('BILL NO.', pageW - 52, 13);
+    doc.setFontSize(9);
+    doc.text(r.receiptnumber || '-', pageW - 52, 20, { maxWidth: 48 });
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(200, 190, 255);
+    doc.text(
+      new Date(r.receiptdate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+      pageW - 52, 30
+    );
+
+    // ── Patient & Invoice info cards ────────────────────────────────────────
+    const infoY = 48;
+
+    // Left card — Billed To
+    doc.setFillColor(248, 247, 255);
+    doc.setDrawColor(220, 215, 250);
+    doc.roundedRect(margin, infoY, 85, 34, 3, 3, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(109, 40, 217);
+    doc.text('BILLED TO', margin + 4, infoY + 7);
+    doc.setFontSize(10);
+    doc.setTextColor(30, 27, 75);
+    doc.text(r.patientName || 'Walk-in Patient', margin + 4, infoY + 15, { maxWidth: 76 });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(100, 90, 140);
+    doc.text(`Patient ID : ${r.patientid || 'N/A'}`, margin + 4, infoY + 23);
+    doc.text(`OPD Ref    : ${r.opdid || 'N/A'}`, margin + 4, infoY + 29);
+
+    // Right card — Invoice Details
+    const rightX = pageW - margin - 85;
+    doc.setFillColor(248, 247, 255);
+    doc.setDrawColor(220, 215, 250);
+    doc.roundedRect(rightX, infoY, 85, 34, 3, 3, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(109, 40, 217);
+    doc.text('INVOICE DETAILS', rightX + 4, infoY + 7);
+
+    const detailRows: [string, string][] = [
+      ['Invoice Date :', new Date(r.receiptdate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })],
+      ['Payment Mode :', r.paymentModeName || 'N/A'],
+      ['Status       :', r.status],
+    ];
+    if (r.referenceNumber) detailRows.push(['Ref No.      :', r.referenceNumber]);
+
+    detailRows.forEach(([label, value], idx) => {
+      const ry = infoY + 15 + idx * 6.5;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(100, 90, 140);
+      doc.text(label, rightX + 4, ry);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(30, 27, 75);
+      doc.text(value, rightX + 38, ry);
     });
-    const finalY = (doc as any).lastAutoTable.finalY + 10;
-    doc.text(`Subtotal: ₹${r.subtotalamount?.toFixed(2)}`, 14, finalY);
-    doc.text(`Tax: ₹${r.taxamount?.toFixed(2)}`, 14, finalY + 6);
-    if ((r.discountamount || 0) > 0) {
-      doc.text(`Discount: -₹${r.discountamount?.toFixed(2)}`, 14, finalY + 12);
-      doc.text(`Total Due: ₹${r.totalamount?.toFixed(2)}`, 14, finalY + 18);
-      doc.text(`Paid Amount: ₹${(r.paidamount || 0).toFixed(2)}`, 14, finalY + 24);
-      doc.text(`Status: ${r.status}`, 14, finalY + 30);
-      if (r.referenceNumber) doc.text(`Ref/Transaction: ${r.referenceNumber}`, 14, finalY + 36);
-    } else {
-      doc.text(`Total Due: ₹${r.totalamount?.toFixed(2)}`, 14, finalY + 12);
-      doc.text(`Paid Amount: ₹${(r.paidamount || 0).toFixed(2)}`, 14, finalY + 18);
-      doc.text(`Status: ${r.status}`, 14, finalY + 24);
-      if (r.referenceNumber) doc.text(`Ref/Transaction: ${r.referenceNumber}`, 14, finalY + 30);
+
+    // ── Items table ─────────────────────────────────────────────────────────
+    autoTable(doc, {
+      startY: infoY + 42,
+      margin: { left: margin, right: margin },
+      head: [[
+        'DESCRIPTION',
+        { content: 'QTY', styles: { halign: 'center' } },
+        { content: 'RATE (Rs.)', styles: { halign: 'right' } },
+        { content: 'AMOUNT (Rs.)', styles: { halign: 'right' } },
+      ]],
+      body: (r.items || []).map((item) => [
+        item.description || '-',
+        { content: String(item.qty ?? 1), styles: { halign: 'center' } },
+        { content: (item.rate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), styles: { halign: 'right' } },
+        { content: (item.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), styles: { halign: 'right' } },
+      ]),
+      headStyles: {
+        fillColor: [109, 40, 217],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 8,
+        cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
+      },
+      bodyStyles: {
+        fontSize: 9,
+        cellPadding: { top: 3.5, bottom: 3.5, left: 4, right: 4 },
+        textColor: [40, 35, 80],
+      },
+      alternateRowStyles: { fillColor: [248, 247, 255] },
+      columnStyles: {
+        0: { cellWidth: 'auto' },
+        1: { cellWidth: 18 },
+        2: { cellWidth: 35 },
+        3: { cellWidth: 38 },
+      },
+      tableLineColor: [220, 215, 250],
+      tableLineWidth: 0.3,
+      showHead: 'everyPage',
+    });
+
+    // ── Summary box (right-aligned) ─────────────────────────────────────────
+    const summaryY = (doc as any).lastAutoTable.finalY + 8;
+    const summaryX = pageW - margin - 85;
+
+    const subtotal = Number(r.subtotalamount) || 0;
+    const tax = Number(r.taxamount) || 0;
+    const discount = Number(r.discountamount) || 0;
+    const total = Number(r.totalamount) || 0;
+    const paid = Number(r.paidamount) || 0;
+    const balance = total - paid;
+
+    const sumRows = [
+      { label: 'Subtotal', value: subtotal, negative: false },
+      { label: 'Tax', value: tax, negative: false },
+      ...(discount > 0 ? [{ label: 'Discount', value: discount, negative: true }] : []),
+    ];
+    const boxH = sumRows.length * 7.5 + 42;
+
+    doc.setFillColor(248, 247, 255);
+    doc.setDrawColor(220, 215, 250);
+    doc.roundedRect(summaryX, summaryY, 85, boxH, 3, 3, 'FD');
+
+    let sy = summaryY + 8;
+
+    // Section title
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    doc.setTextColor(109, 40, 217);
+    doc.text('SUMMARY', summaryX + 4, sy);
+    sy += 5;
+    doc.setDrawColor(220, 215, 250);
+    doc.line(summaryX + 2, sy, summaryX + 83, sy);
+    sy += 5;
+
+    // Sub-rows
+    sumRows.forEach(row => {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8.5);
+      doc.setTextColor(100, 90, 140);
+      doc.text(row.label, summaryX + 4, sy);
+      const valStr = `${row.negative ? '- ' : ''}Rs. ${row.value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      doc.text(valStr, summaryX + 83, sy, { align: 'right' });
+      sy += 7.5;
+    });
+
+    // Total line
+    doc.setDrawColor(180, 160, 240);
+    doc.line(summaryX + 2, sy, summaryX + 83, sy);
+    sy += 5.5;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10.5);
+    doc.setTextColor(30, 27, 75);
+    doc.text('TOTAL', summaryX + 4, sy);
+    doc.text(
+      `Rs. ${total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      summaryX + 83, sy, { align: 'right' }
+    );
+    sy += 7;
+
+    // Paid
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.setTextColor(22, 163, 74);
+    doc.text('Amount Paid', summaryX + 4, sy);
+    doc.text(
+      `Rs. ${paid.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      summaryX + 83, sy, { align: 'right' }
+    );
+    sy += 7;
+
+    // Balance Due
+    const isCleared = balance <= 0;
+    doc.setTextColor(isCleared ? 22 : 220, isCleared ? 163 : 38, isCleared ? 74 : 38);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Balance Due', summaryX + 4, sy);
+    doc.text(
+      `Rs. ${Math.max(0, balance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      summaryX + 83, sy, { align: 'right' }
+    );
+    sy += 7;
+
+    // Status pill
+    const statusPalette: Record<string, [number, number, number]> = {
+      'Paid': [22, 163, 74],
+      'Pending': [217, 119, 6],
+      'Insurance Pending': [139, 92, 246],
+      'Partially Paid': [37, 99, 235],
+      'Cancelled': [220, 38, 38],
+    };
+    const [pr, pg, pb] = statusPalette[r.status] || [109, 40, 217];
+    doc.setFillColor(pr, pg, pb);
+    doc.roundedRect(summaryX + 4, sy, 42, 7, 1.5, 1.5, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7);
+    doc.setTextColor(255, 255, 255);
+    doc.text(r.status.toUpperCase(), summaryX + 25, sy + 4.8, { align: 'center' });
+
+    // ── Payment reference (left side, aligned with summary top) ────────────
+    if (r.referenceNumber) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7);
+      doc.setTextColor(109, 40, 217);
+      doc.text('PAYMENT REFERENCE', margin, summaryY + 8);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(40, 35, 80);
+      doc.text(r.referenceNumber, margin, summaryY + 15);
     }
+
+    // ── Footer bar ──────────────────────────────────────────────────────────
+    doc.setFillColor(245, 243, 255);
+    doc.rect(0, pageH - 18, pageW, 18, 'F');
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(7);
+    doc.setTextColor(140, 130, 180);
+    doc.text('This is a computer-generated invoice. No signature required.', pageW / 2, pageH - 10, { align: 'center' });
+    doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`, pageW / 2, pageH - 5, { align: 'center' });
+
     doc.save(`invoice-${r.receiptnumber}.pdf`);
   };
+
 
   // Item helpers
   const addItem = () => {
@@ -525,26 +806,42 @@ export function BillingView({
               Generate invoices, record payments and track revenue.
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              onClick={() => setIsFilterOpen(true)}
-              className={cn(
-                "gap-2 rounded-xl h-11 px-5 border-slate-200 dark:border-slate-800 font-semibold transition-all duration-300",
-                isFilterOpen
-                  ? "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-900/30"
-                  : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200"
-              )}
-            >
-              <Filter className="h-4 w-4" /> Filters
-            </Button>
-            {canEdit && (
+          <div className="flex flex-wrap items-center gap-2 md:gap-3">
+            {/* Refresh button */}
+            <Tooltip content="Refresh">
               <Button
-                onClick={handleOpenCreate}
-                className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 rounded-xl px-6 h-11 text-white shadow-lg shadow-violet-500/20 transition-all hover:scale-105 active:scale-95"
+                variant="outline"
+                size="icon"
+                onClick={() => mutateReceipts()}
+                disabled={isRefreshingReceipts}
+                className="rounded-xl h-11 w-11 border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:bg-violet-50 hover:text-violet-700 hover:border-violet-200 dark:hover:bg-violet-900/30 transition-all duration-300"
               >
-                <Plus className="mr-2 h-5 w-5" /> New Invoice
+                <RefreshCw className={cn("h-4 w-4 transition-transform duration-500", isRefreshingReceipts && "animate-spin")} />
               </Button>
+            </Tooltip>
+            <Tooltip content="Filters">
+              <Button
+                variant="outline"
+                onClick={() => setIsFilterOpen(true)}
+                className={cn(
+                  "gap-2 rounded-xl h-11 px-5 border-slate-200 dark:border-slate-800 font-semibold transition-all duration-300",
+                  isFilterOpen
+                    ? "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-900/30"
+                    : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200"
+                )}
+              >
+                <Filter className="h-4 w-4" /> Filters
+              </Button>
+            </Tooltip>
+            {canEdit && (
+              <Tooltip content="Create New Invoice">
+                <Button
+                  onClick={handleOpenCreate}
+                  className="bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 rounded-xl px-6 h-11 text-white shadow-lg shadow-violet-500/20 transition-all hover:scale-105 active:scale-95"
+                >
+                  <Plus className="mr-2 h-5 w-5" /> New Invoice
+                </Button>
+              </Tooltip> 
             )}
           </div>
         </div>
@@ -603,32 +900,36 @@ export function BillingView({
         {isLoadingReceipts ? (
           /* Loading skeleton */
           <div className="rounded-2xl border border-slate-200/60 dark:border-slate-800/60 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-sm overflow-hidden">
-            <div className="grid grid-cols-12 gap-2 px-5 py-3 bg-slate-50/80 dark:bg-slate-800/40 border-b border-slate-200/60 dark:border-slate-800/60 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-              <div className="col-span-3">Patient</div>
-              <div className="col-span-2">Bill No</div>
-              <div className="col-span-2">Date</div>
-              <div className="col-span-1 text-right">Amount</div>
-              <div className="col-span-2 text-center">Status</div>
-              <div className="col-span-2 text-right">Actions</div>
-            </div>
-            {[...Array(5)].map((_, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2 px-5 py-4 border-b border-slate-100 dark:border-slate-800/50 items-center animate-pulse">
-                <div className="col-span-3 flex items-center gap-3">
-                  <div className="h-9 w-9 rounded-full bg-slate-200 dark:bg-slate-700 shrink-0" />
-                  <div className="space-y-1.5 flex-1 min-w-0">
-                    <div className="h-3 rounded-full bg-slate-200 dark:bg-slate-700 w-3/4" />
-                    <div className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 w-1/2" />
+            <div className="overflow-x-auto">
+              <div className="min-w-[900px]">
+                <div className="grid grid-cols-12 gap-2 px-5 py-3 bg-slate-50/80 dark:bg-slate-800/40 border-b border-slate-200/60 dark:border-slate-800/60 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                  <div className="col-span-3">Patient</div>
+                  <div className="col-span-2">Bill No</div>
+                  <div className="col-span-2">Date</div>
+                  <div className="col-span-1 text-right">Amount</div>
+                  <div className="col-span-2 text-center">Status</div>
+                  <div className="col-span-2 text-center">Actions</div>
+                </div>
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="grid grid-cols-12 gap-2 px-5 py-4 border-b border-slate-100 dark:border-slate-800/50 items-center animate-pulse">
+                    <div className="col-span-3 flex items-center gap-3">
+                      <div className="h-9 w-9 rounded-full bg-slate-200 dark:bg-slate-700 shrink-0" />
+                      <div className="space-y-1.5 flex-1 min-w-0">
+                        <div className="h-3 rounded-full bg-slate-200 dark:bg-slate-700 w-3/4" />
+                        <div className="h-2.5 rounded-full bg-slate-100 dark:bg-slate-800 w-1/2" />
+                      </div>
+                    </div>
+                    <div className="col-span-2"><div className="h-6 w-24 rounded-lg bg-slate-100 dark:bg-slate-800" /></div>
+                    <div className="col-span-2"><div className="h-3 rounded-full bg-slate-200 dark:bg-slate-700 w-20" /></div>
+                    <div className="col-span-1 flex justify-end"><div className="h-3 rounded-full bg-slate-200 dark:bg-slate-700 w-12" /></div>
+                    <div className="col-span-2 flex justify-center"><div className="h-6 w-20 rounded-full bg-slate-100 dark:bg-slate-800" /></div>
+                    <div className="col-span-2 flex justify-end gap-1">
+                      {[...Array(4)].map((_, j) => <div key={j} className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-slate-800" />)}
+                    </div>
                   </div>
-                </div>
-                <div className="col-span-2"><div className="h-6 w-24 rounded-lg bg-slate-100 dark:bg-slate-800" /></div>
-                <div className="col-span-2"><div className="h-3 rounded-full bg-slate-200 dark:bg-slate-700 w-20" /></div>
-                <div className="col-span-1 flex justify-end"><div className="h-3 rounded-full bg-slate-200 dark:bg-slate-700 w-12" /></div>
-                <div className="col-span-2 flex justify-center"><div className="h-6 w-20 rounded-full bg-slate-100 dark:bg-slate-800" /></div>
-                <div className="col-span-2 flex justify-end gap-1">
-                  {[...Array(4)].map((_, j) => <div key={j} className="h-8 w-8 rounded-lg bg-slate-100 dark:bg-slate-800" />)}
-                </div>
+                ))}
               </div>
-            ))}
+            </div>
           </div>
         ) : filteredReceipts.length === 0 ? (
           <motion.div
@@ -651,117 +952,126 @@ export function BillingView({
           </motion.div>
         ) : (
           <div className="rounded-2xl border border-slate-200/60 dark:border-slate-800/60 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-sm overflow-hidden">
-            {/* Table header */}
-            <div className="grid grid-cols-12 gap-2 px-5 py-3 bg-slate-50/80 dark:bg-slate-800/40 border-b border-slate-200/60 dark:border-slate-800/60 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-              <div className="col-span-3">Patient</div>
-              <div className="col-span-2">Bill No</div>
-              <div className="col-span-2">Date</div>
-              <div className="col-span-1 text-right">Amount</div>
-              <div className="col-span-2 text-center">Status</div>
-              <div className="col-span-2 text-right">Actions</div>
+            <div className="overflow-x-auto">
+              <div className="min-w-[900px]">
+                {/* Table header */}
+                <div className="grid grid-cols-12 gap-2 px-5 py-3 bg-slate-50/80 dark:bg-slate-800/40 border-b border-slate-200/60 dark:border-slate-800/60 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                  <div className="col-span-3">Patient</div>
+                  <div className="col-span-2">Bill No</div>
+                  <div className="col-span-2">Date</div>
+                  <div className="col-span-1 text-right">Amount</div>
+                  <div className="col-span-2 text-center">Status</div>
+                  <div className="col-span-2 text-center">Actions</div>
+                </div>
+
+                <AnimatePresence>
+                  {paginatedReceipts.map((r, i) => {
+                    const sc = getStatusConfig(r.status);
+                    return (
+                      <motion.div
+                        key={r.receiptid}
+                        initial={{ opacity: 0, x: -8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 8 }}
+                        transition={{ delay: i * 0.03 }}
+                        className="grid grid-cols-12 gap-2 px-5 py-4 border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors group items-center"
+                      >
+                        {/* Patient */}
+                        <div className="col-span-3 flex items-center gap-3 min-w-0">
+                          <div className="h-9 w-9 rounded-full bg-gradient-to-br from-violet-100 to-indigo-100 dark:from-violet-900/30 dark:to-indigo-900/30 flex items-center justify-center text-violet-600 dark:text-violet-400 font-extrabold text-sm shrink-0">
+                            {(r.patientName || "?")?.[0]}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-bold text-sm text-slate-800 dark:text-slate-200 truncate">{r.patientName || "—"}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {r.paymentModeName || "—"}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Bill No */}
+                        <div className="col-span-2">
+                          <span className="font-mono text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-1 rounded-lg">
+                            {r.receiptnumber}
+                          </span>
+                        </div>
+
+                        {/* Date */}
+                        <div className="col-span-2 text-xs text-slate-500 dark:text-slate-400 font-medium">
+                          {new Date(r.receiptdate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
+                        </div>
+
+                        {/* Amount */}
+                        <div className="col-span-1 text-right">
+                          <span className="font-bold text-sm text-slate-800 dark:text-slate-200">
+                            ₹{(r.totalamount || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                          </span>
+                          {r.paidamount != null && r.paidamount > 0 && r.paidamount < (r.totalamount || 0) && (
+                            <p className="text-[10px] text-emerald-600 font-semibold">
+                              ₹{r.paidamount.toLocaleString("en-IN", { maximumFractionDigits: 0 })} paid
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Status */}
+                        <div className="col-span-2 flex justify-center">
+                          <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border", sc.color)}>
+                            {sc.icon}
+                            {r.status}
+                          </span>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="col-span-2 flex items-center justify-end gap-1">
+                          {canEdit && r.status !== "Paid" && (
+                            <Tooltip content="Record Payment">
+                              <button
+                                onClick={() => handlePay(r)}
+                                className="h-8 w-8 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:hover:bg-emerald-900/40 text-emerald-600 flex items-center justify-center transition-colors"
+                              >
+                                <Wallet className="h-3.5 w-3.5" />
+                              </button>
+                            </Tooltip>
+                          )}
+                          {canEdit && r.status !== "Paid" && (
+                            <Tooltip content="Edit Invoice">
+                              <button
+                                onClick={() => handleOpenEdit(r)}
+                                className="h-8 w-8 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 flex items-center justify-center transition-colors"
+                              >
+                                <Edit className="h-3.5 w-3.5" />
+                              </button>
+                            </Tooltip>
+                          )}
+                          <Tooltip content="View Invoice">
+                            <button
+                              onClick={() => setViewingReceipt(r)}
+                              title="View Invoice"
+                              className="h-8 w-8 rounded-lg bg-violet-50 hover:bg-violet-100 dark:bg-violet-900/20 dark:hover:bg-violet-900/40 text-violet-600 flex items-center justify-center transition-colors"
+                            >
+                              <FileText className="h-3.5 w-3.5" />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="Download PDF">
+                            <button
+                              onClick={() => handleDownloadPDF(r)}
+                              className="h-8 w-8 rounded-lg bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:hover:bg-indigo-900/40 text-indigo-600 flex items-center justify-center transition-colors"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                            </button>
+                          </Tooltip>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </AnimatePresence>
+              </div>
             </div>
-
-            <AnimatePresence>
-              {paginatedReceipts.map((r, i) => {
-                const sc = getStatusConfig(r.status);
-                return (
-                  <motion.div
-                    key={r.receiptid}
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: 8 }}
-                    transition={{ delay: i * 0.03 }}
-                    className="grid grid-cols-12 gap-2 px-5 py-4 border-b border-slate-100 dark:border-slate-800/50 hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors group items-center"
-                  >
-                    {/* Patient */}
-                    <div className="col-span-3 flex items-center gap-3 min-w-0">
-                      <div className="h-9 w-9 rounded-full bg-gradient-to-br from-violet-100 to-indigo-100 dark:from-violet-900/30 dark:to-indigo-900/30 flex items-center justify-center text-violet-600 dark:text-violet-400 font-extrabold text-sm shrink-0">
-                        {(r.patientName || "?")?.[0]}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-bold text-sm text-slate-800 dark:text-slate-200 truncate">{r.patientName || "—"}</p>
-                        <p className="text-[10px] text-muted-foreground">
-                          {r.paymentModeName || "—"}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Bill No */}
-                    <div className="col-span-2">
-                      <span className="font-mono text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-1 rounded-lg">
-                        {r.receiptnumber}
-                      </span>
-                    </div>
-
-                    {/* Date */}
-                    <div className="col-span-2 text-xs text-slate-500 dark:text-slate-400 font-medium">
-                      {new Date(r.receiptdate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
-                    </div>
-
-                    {/* Amount */}
-                    <div className="col-span-1 text-right">
-                      <span className="font-bold text-sm text-slate-800 dark:text-slate-200">
-                        ₹{(r.totalamount || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
-                      </span>
-                      {r.paidamount != null && r.paidamount > 0 && r.paidamount < (r.totalamount || 0) && (
-                        <p className="text-[10px] text-emerald-600 font-semibold">
-                          ₹{r.paidamount.toLocaleString("en-IN", { maximumFractionDigits: 0 })} paid
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Status */}
-                    <div className="col-span-2 flex justify-center">
-                      <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold border", sc.color)}>
-                        {sc.icon}
-                        {r.status}
-                      </span>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="col-span-2 flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {canEdit && r.status !== "Paid" && (
-                        <button
-                          onClick={() => handlePay(r)}
-                          title="Record Payment"
-                          className="h-8 w-8 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-900/20 dark:hover:bg-emerald-900/40 text-emerald-600 flex items-center justify-center transition-colors"
-                        >
-                          <Wallet className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      {canEdit && r.status !== "Paid" && (
-                        <button
-                          onClick={() => handleOpenEdit(r)}
-                          title="Edit Invoice"
-                          className="h-8 w-8 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 flex items-center justify-center transition-colors"
-                        >
-                          <Edit className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      <button
-                        onClick={() => setViewingReceipt(r)}
-                        title="View Invoice"
-                        className="h-8 w-8 rounded-lg bg-violet-50 hover:bg-violet-100 dark:bg-violet-900/20 dark:hover:bg-violet-900/40 text-violet-600 flex items-center justify-center transition-colors"
-                      >
-                        <FileText className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleDownloadPDF(r)}
-                        title="Download PDF"
-                        className="h-8 w-8 rounded-lg bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:hover:bg-indigo-900/40 text-indigo-600 flex items-center justify-center transition-colors"
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
 
             {/* Table Footer: Pagination */}
             {totalPages > 1 && (
-              <div className="flex items-center justify-between px-5 py-4 border-t border-slate-200/60 dark:border-slate-800/60 bg-slate-50/50 dark:bg-slate-800/20 text-sm">
-                <span className="text-xs font-medium text-slate-500">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 px-5 py-4 border-t border-slate-200/60 dark:border-slate-800/60 bg-slate-50/50 dark:bg-slate-800/20 text-sm">
+                <span className="text-xs font-medium text-slate-500 text-center sm:text-left">
                   Showing {(currentPage - 1) * itemsPerPage + 1} to {Math.min(currentPage * itemsPerPage, filteredReceipts.length)} of {filteredReceipts.length} invoices
                 </span>
                 <div className="flex items-center gap-2">
@@ -847,7 +1157,7 @@ export function BillingView({
             <ScrollArea className="max-h-[65vh]">
               <div className="p-8 space-y-7">
                 {/* Patient */}
-                <div className="grid grid-cols-2 gap-5">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   <div className="space-y-2">
                     <Label className="text-xs font-bold uppercase tracking-widest text-slate-400 flex items-center gap-1">
                       <User className="h-3 w-3" /> Patient <span className="text-rose-500">*</span>
@@ -917,75 +1227,133 @@ export function BillingView({
                     </div>
                   )}
 
-                  {/* Table header */}
-                  {formData.items.length > 0 && (
-                    <div className="grid grid-cols-12 gap-2 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                      <div className="col-span-5">Item / Catalog</div>
-                      <div className="col-span-2">Description</div>
-                      <div className="col-span-1 text-center">Qty</div>
-                      <div className="col-span-2 text-right">Rate (₹)</div>
-                      <div className="col-span-1 text-right">Amt</div>
-                      <div className="col-span-1"></div>
-                    </div>
-                  )}
+                  {/* Table area wrapped for mobile */}
+                  <div className="overflow-x-auto w-full border border-slate-100 dark:border-slate-800/50 rounded-xl pb-2">
+                    <div className="min-w-[700px] px-1">
+                      {/* Table header */}
+                      {formData.items.length > 0 && (
+                        <div className="grid grid-cols-12 gap-2 px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                          <div className="col-span-4">Item / Catalog</div>
+                          <div className="col-span-3">Description</div>
+                          <div className="col-span-1 text-center">Qty</div>
+                          <div className="col-span-2 text-right">Rate (₹)</div>
+                          <div className="col-span-1 text-right">Amt</div>
+                          <div className="col-span-1"></div>
+                        </div>
+                      )}
 
-                  <div className="space-y-2">
-                    {formData.items.map((item, idx) => (
-                      <motion.div
-                        key={idx}
-                        initial={{ opacity: 0, y: 6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="grid grid-cols-12 gap-2 items-center bg-slate-50 dark:bg-slate-800/50 rounded-xl p-2"
-                      >
-                        <div className="col-span-5">
-                          <SearchableSelect
-                            options={catalogOptions}
-                            value={item.subtreatmenttypeid || ""}
-                            onChange={(v) => v && selectCatalogItem(idx, v)}
-                            placeholder="Select from catalog..."
-                            className="w-full"
-                          />
-                        </div>
-                        <div className="col-span-2">
-                          <Input
-                            value={item.description}
-                            onChange={(e) => updateItem(idx, "description", e.target.value)}
-                            placeholder="Description"
-                            className="h-9 rounded-lg text-xs"
-                          />
-                        </div>
-                        <div className="col-span-1">
-                          <Input
-                            type="number"
-                            min={1}
-                            value={item.qty}
-                            onChange={(e) => updateItem(idx, "qty", Number(e.target.value))}
-                            className="h-9 rounded-lg text-center text-xs"
-                          />
-                        </div>
-                        <div className="col-span-2">
-                          <Input
-                            type="number"
-                            min={0}
-                            value={item.rate}
-                            onChange={(e) => updateItem(idx, "rate", Number(e.target.value))}
-                            className="h-9 rounded-lg text-right text-xs"
-                          />
-                        </div>
-                        <div className="col-span-1 text-right text-xs font-bold text-slate-700 dark:text-slate-300 pr-1">
-                          ₹{(item.amount || 0).toFixed(0)}
-                        </div>
-                        <div className="col-span-1 flex justify-center">
-                          <button
-                            type="button"
-                            onClick={() => removeItem(idx)}
-                            className="h-7 w-7 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-900/20 text-rose-500 flex items-center justify-center"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </motion.div>
-                    ))}
+                      <div className="space-y-2 mt-1">
+                        {formData.items.map((item, idx) => {
+                          const isConsultation = item.description?.toLowerCase().includes('consultation fee');
+                          const isCustom = item.subtreatmenttypeid?.startsWith('CUSTOM');
+                          return (
+                            <motion.div
+                              key={idx}
+                              initial={{ opacity: 0, y: 6 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className={cn(
+                                "grid grid-cols-12 gap-2 items-center rounded-xl p-2 relative",
+                                isConsultation
+                                  ? "bg-violet-50/60 dark:bg-violet-900/10 border border-violet-100 dark:border-violet-800/30"
+                                  : "bg-slate-50 dark:bg-slate-800/50"
+                              )}
+                            >
+                              {/* Read-only lock badge for consultation rows */}
+                              {isConsultation && (
+                                <div className="absolute -top-2 left-3 flex items-center gap-1 bg-violet-100 dark:bg-violet-900/40 text-violet-600 dark:text-violet-400 text-[9px] font-bold px-2 py-0.5 rounded-full border border-violet-200 dark:border-violet-700/50">
+                                  <Lock className="h-2.5 w-2.5" />
+                                  Auto-generated · Read-only
+                                </div>
+                              )}
+
+                              {/* Catalog selector */}
+                              <div className="col-span-4">
+                                {isCustom ? (
+                                  <div className="h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 flex items-center text-xs text-slate-500 dark:text-slate-400 gap-1.5">
+                                    <span className="inline-block bg-slate-100 dark:bg-slate-800 text-slate-500 text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide">Custom</span>
+                                    <span className="truncate">{item.description || 'Manual item'}</span>
+                                  </div>
+                                ) : (
+                                  <SearchableSelect
+                                    options={catalogOptions}
+                                    value={item.subtreatmenttypeid || ""}
+                                    onChange={(v) => v && selectCatalogItem(idx, v)}
+                                    placeholder="Select from catalog..."
+                                    className="w-full"
+                                  />
+                                )}
+                              </div>
+
+                              {/* Description */}
+                              <div className="col-span-3">
+                                <Input
+                                  value={item.description}
+                                  onChange={(e) => updateItem(idx, "description", e.target.value)}
+                                  placeholder="Description"
+                                  disabled={isConsultation}
+                                  className={cn(
+                                    "h-9 rounded-lg text-xs",
+                                    isConsultation && "opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-800"
+                                  )}
+                                />
+                              </div>
+
+                              {/* Qty */}
+                              <div className="col-span-1">
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  value={item.qty}
+                                  onChange={(e) => updateItem(idx, "qty", Number(e.target.value))}
+                                  disabled={isConsultation}
+                                  className={cn(
+                                    "h-9 rounded-lg text-center text-xs px-1",
+                                    isConsultation && "opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-800"
+                                  )}
+                                />
+                              </div>
+
+                              {/* Rate */}
+                              <div className="col-span-2">
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  value={item.rate}
+                                  onChange={(e) => updateItem(idx, "rate", Number(e.target.value))}
+                                  disabled={isConsultation}
+                                  className={cn(
+                                    "h-9 rounded-lg text-right text-xs",
+                                    isConsultation && "opacity-60 cursor-not-allowed bg-slate-100 dark:bg-slate-800"
+                                  )}
+                                />
+                              </div>
+
+                              {/* Amount */}
+                              <div className="col-span-1 text-right text-xs font-bold text-slate-700 dark:text-slate-300 pr-1">
+                                ₹{(item.amount || 0).toFixed(0)}
+                              </div>
+
+                              {/* Delete / Lock */}
+                              <div className="col-span-1 flex justify-center">
+                                {isConsultation ? (
+                                  <div className="h-7 w-7 rounded-lg bg-violet-100 dark:bg-violet-900/30 text-violet-400 flex items-center justify-center" title="Cannot remove auto-generated fee">
+                                    <Lock className="h-3 w-3" />
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => removeItem(idx)}
+                                    className="h-7 w-7 rounded-lg bg-rose-50 hover:bg-rose-100 dark:bg-rose-900/20 text-rose-500 flex items-center justify-center"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                )}
+                              </div>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 </div>
 
@@ -1057,7 +1425,7 @@ export function BillingView({
                 <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4">
                   <span className="text-sm font-medium text-slate-500">Outstanding</span>
                   <span className="text-2xl font-extrabold text-emerald-600">
-                    ₹{((viewingReceipt.totalamount || 0) - (viewingReceipt.paidamount || 0)).toFixed(2)}
+                    ₹{Math.max(0, (viewingReceipt.totalamount || 0) - (viewingReceipt.paidamount || 0)).toFixed(2)}
                   </span>
                 </div>
               )}
@@ -1066,9 +1434,10 @@ export function BillingView({
                 <Input
                   type="number"
                   min={0}
-                  value={paymentAmount}
+                  disabled={paymentMode === "6"}
+                  value={paymentMode === "6" ? "0" : paymentAmount}
                   onChange={(e) => setPaymentAmount(e.target.value)}
-                  className="h-12 rounded-xl text-lg font-bold bg-slate-50 dark:bg-slate-800"
+                  className={`h-12 rounded-xl text-lg font-bold bg-slate-50 dark:bg-slate-800 ${paymentMode === "6" ? "opacity-50 cursor-not-allowed" : ""}`}
                 />
               </div>
               <div className="space-y-2">
@@ -1101,7 +1470,7 @@ export function BillingView({
                     className="space-y-2 overflow-hidden"
                   >
                     <Label className="text-xs font-bold uppercase tracking-widest text-slate-400">
-                      {paymentMode === "6" ? "Insurance Policy / Claim Ref No." : "Transaction ID / Reference No."} <span className="text-rose-500">*</span>
+                      {paymentMode === "6" ? "Insurance Policy / Claim Ref No. (Optional)" : "Transaction ID / Reference No."} {paymentMode !== "6" && <span className="text-rose-500">*</span>}
                     </Label>
                     <Input
                       type="text"
@@ -1119,11 +1488,11 @@ export function BillingView({
               <Button variant="outline" onClick={() => { setIsPayOpen(false); setViewingReceipt(null); }} className="rounded-xl h-11 px-6">Cancel</Button>
               <Button
                 onClick={handleConfirmPayment}
-                disabled={isSaving || !paymentAmount}
+                disabled={isSaving || (!paymentAmount && paymentMode !== "6")}
                 className="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white rounded-xl h-11 px-8 shadow-lg shadow-emerald-500/20"
               >
                 {isSaving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                Confirm Payment
+                {paymentMode === "6" ? "Mark Insurance Pending" : "Confirm Payment"}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1164,17 +1533,17 @@ export function BillingView({
                   {/* Items table */}
                   <div className="rounded-2xl overflow-hidden border border-slate-100 dark:border-slate-800">
                     <div className="grid grid-cols-12 px-4 py-2.5 bg-slate-50 dark:bg-slate-800 text-[10px] font-bold uppercase tracking-widest text-slate-400">
-                      <div className="col-span-6">Description</div>
+                      <div className="col-span-5">Description</div>
                       <div className="col-span-2 text-center">Qty</div>
-                      <div className="col-span-2 text-right">Rate</div>
-                      <div className="col-span-2 text-right">Amt</div>
+                      <div className="col-span-3 text-right">Rate</div>
+                      <div className="col-span-2 text-right">Amount</div>
                     </div>
                     {(viewingReceipt.items || []).map((item, i) => (
                       <div key={i} className="grid grid-cols-12 px-4 py-3 border-t border-slate-100 dark:border-slate-800 text-sm">
-                        <div className="col-span-6 font-medium text-slate-700 dark:text-slate-300">{item.description}</div>
+                        <div className="col-span-5 font-medium text-slate-700 dark:text-slate-300 pr-2">{item.description}</div>
                         <div className="col-span-2 text-center text-slate-500">{item.qty}</div>
-                        <div className="col-span-2 text-right text-slate-500">₹{item.rate.toFixed(2)}</div>
-                        <div className="col-span-2 text-right font-bold text-slate-800 dark:text-slate-200">₹{item.amount.toFixed(2)}</div>
+                        <div className="col-span-3 text-right text-slate-500">₹{item.rate.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                        <div className="col-span-2 text-right font-bold text-slate-800 dark:text-slate-200">₹{item.amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                       </div>
                     ))}
                   </div>

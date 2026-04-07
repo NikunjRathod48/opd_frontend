@@ -28,6 +28,8 @@ export interface QueueToken {
     issued_at: string;
     started_at?: string;
     completed_at?: string;
+    priority: string;
+    visit_type?: string;
     opd_visits?: {
         patients?: {
             users_patients_user_idTousers?: {
@@ -78,8 +80,12 @@ export const queuesService = {
         return api.get<QueueToken[]>(`/queues/${queueId}/tokens`);
     },
 
-    generateToken: async (queueId: number, opdId?: number | null) => {
-        return api.post<any>(`/queues/${queueId}/tokens`, { opd_id: opdId ?? null });
+    generateToken: async (queueId: number, opdId?: number | null, priority?: string, status?: string) => {
+        return api.post<any>(`/queues/${queueId}/tokens`, { opd_id: opdId ?? null, priority, status });
+    },
+
+    generateReturnToken: async (opdId: number) => {
+        return api.post<any>(`/queues/tokens/return`, { opd_id: opdId });
     },
 
     updateTokenStatus: async (tokenId: number, status: string) => {

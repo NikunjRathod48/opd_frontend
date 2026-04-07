@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -11,13 +12,12 @@ import { cn } from "@/lib/utils";
 import {
     Activity, Hash, Users, RefreshCw, ChevronRight, Plus,
     CheckCircle2, SkipForward, ArrowRight, Search, UserPlus, XCircle, RotateCcw,
-    X, Loader2, Stethoscope, AlertCircle
+    X, Loader2, Stethoscope, AlertCircle, AlertTriangle, Flame, Clock
 } from "lucide-react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { queuesService, DailyQueue, QueueToken } from "@/services/queues-service";
-import { opdService, PatientSearchResult } from "@/services/opd-service";
-import { OpdWorkspace } from "./opd-workspace";
+import { opdService, PatientSearchResult, OpdVisit } from "@/services/opd-service";
 import { City, useData } from "@/context/data-context";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { useForm, Controller, SubmitHandler } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -163,20 +163,19 @@ function StartConsultation({ token, queue, hospitalGroupId, onLinked, onRevert }
     };
 
     return (
-        <div className="rounded-xl border bg-card p-5 space-y-4 animate-in fade-in duration-300 relative">
-            <div className="flex items-center justify-between">
+        <div className="space-y-4 animate-in fade-in duration-300 relative">
+            <div className="flex items-center justify-between pb-2 border-b">
                 <div className="flex items-center gap-2">
                     <Stethoscope className="h-5 w-5 text-primary" />
-                    <h3 className="font-semibold text-base">Start Consultation — Token #{token.token_number}</h3>
+                    <h3 className="font-semibold text-lg text-foreground">Token #{token.token_number}</h3>
                 </div>
-                <button 
+                <button
                     onClick={() => onRevert(token.token_id)}
                     className="h-8 px-3 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-lg flex items-center gap-1.5 transition-colors border border-red-200"
                 >
                     <ArrowRight className="h-3 w-3 rotate-180" /> Revert Token
                 </button>
             </div>
-            <p className="text-sm text-muted-foreground">This token has no OPD record. Search for the patient or register a walk-in.</p>
 
             {/* Tabs */}
             <div className="flex gap-1 bg-muted rounded-lg p-1">
@@ -361,19 +360,24 @@ export function DoctorQueueView() {
     const [activeQueue, setActiveQueue] = useState<DailyQueue | null>(null);
     const [previousOpenQueues, setPreviousOpenQueues] = useState<DailyQueue[]>([]);
     const [tokens, setTokens] = useState<QueueToken[]>([]);
+    const [returnVisits, setReturnVisits] = useState<OpdVisit[]>([]);
+    const [dischargeConfig, setDischargeConfig] = useState<{ opdId: number, tokenId?: number } | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [actionLoading, setActionLoading] = useState<number | null>(null);
 
-    // OPD Workspace modal
-    const [workspaceOpdId, setWorkspaceOpdId] = useState<number | null>(null);
+    // OPD Workspace — opened via full-page route now
     const [consultToken, setConsultToken] = useState<QueueToken | null>(null); // walk-in consult
 
+
+    const router = useRouter();
     const { doctors } = useData();
 
-    // Find the actual doctor profile using the user.id (which is user_id in DB)
-    const doctorProfile = doctors.find((d: any) => String(d.userid) === String(user?.id));
-    const finalDoctorId = doctorProfile?.doctorid || (user as any)?.doctorid || (user as any)?.id;
+    // FIX 1 (doctorId race): resolve via useMemo — never falls back to user.id which is user_id, not doctor_id
+    const finalDoctorId = useMemo(() => {
+        const profile = doctors.find((d: any) => String(d.userid) === String(user?.id));
+        return (profile as any)?.doctorid ?? null;
+    }, [doctors, user?.id]);
 
     const hospitalId = (user as any)?.hospitalid || (user as any)?.hospital_id || (user as any)?.hospitalId;
     const hospitalGroupId = (user as any)?.hospitalgroupid || (user as any)?.hospital_group_id;
@@ -423,7 +427,18 @@ export function DoctorQueueView() {
         } catch { setTokens([]); }
     }, []);
 
-    useEffect(() => { loadQueue(); }, [loadQueue]);
+    const loadReturnVisits = useCallback(async () => {
+        if (!finalDoctorId) return;
+        try {
+            const activeVisits = await opdService.getVisits({ doctor_id: finalDoctorId, is_active: true });
+            const withTests = activeVisits.filter((v: any) =>
+                v.opd_tests?.some((t: any) => t.test_status === "Completed")
+            );
+            setReturnVisits(withTests);
+        } catch { setReturnVisits([]); }
+    }, [finalDoctorId]);
+
+    useEffect(() => { loadQueue(); loadReturnVisits(); }, [loadQueue, loadReturnVisits]);
     useEffect(() => {
         if (activeQueue) loadTokens(activeQueue.daily_queue_id);
         else setTokens([]);
@@ -435,12 +450,13 @@ export function DoctorQueueView() {
         const handleQueueUpdate = () => {
             loadTokens(activeQueue.daily_queue_id);
             loadQueue(); // refresh queue stats as well
+            loadReturnVisits();
         };
         socket.on("queue:updated", handleQueueUpdate);
         return () => {
             socket.off("queue:updated", handleQueueUpdate);
         };
-    }, [socket, activeQueue, loadTokens, loadQueue]);
+    }, [socket, activeQueue, loadTokens, loadQueue, loadReturnVisits]);
 
     // ─── Actions ──────────────────────────────────────────────────────────────
 
@@ -509,30 +525,33 @@ export function DoctorQueueView() {
         } finally { setActionLoading(null); }
     };
 
+    // FIX 2+3: read opd_id from API response (not stale closure); no frontend OPD creation
+    // FIX 4: handleStartConsultation REMOVED — OPD creation is backend responsibility
     const handleCallToken = async (token: QueueToken) => {
-        // Set token to In Progress
+        if (actionLoading !== null) return; // prevent double-tap
         setActionLoading(token.token_id);
         try {
-            await queuesService.updateTokenStatus(token.token_id, "In Progress");
-            if (activeQueue) await loadTokens(activeQueue.daily_queue_id);
+            // Backend atomically sets token In Progress AND creates OPD if appointment exists.
+            // Response is the updated token with opd_id populated.
+            const updated = await queuesService.updateTokenStatus(token.token_id, "In Progress") as any;
+            if (activeQueue) loadTokens(activeQueue.daily_queue_id); // background refresh
+
+            if (updated?.opd_id) {
+                router.push(`/doctor/consultation/${updated.opd_id}`);
+            } else {
+                // Walk-in: no appointment → open patient registration sheet
+                setConsultToken({ ...token, status: "In Progress" } as QueueToken);
+            }
         } catch (e: any) {
             addToast(e?.message || "Failed to call token", "error");
+        } finally {
             setActionLoading(null);
-            return;
-        }
-        setActionLoading(null);
-
-        // Open workspace or start-consult flow
-        if (token.opd_id) {
-            setWorkspaceOpdId(token.opd_id);
-        } else {
-            setConsultToken(token);
         }
     };
 
     const handleTokenLinked = async (opdId: number) => {
         setConsultToken(null);
-        setWorkspaceOpdId(opdId);
+        router.push(`/doctor/consultation/${opdId}`);
         if (activeQueue) await loadTokens(activeQueue.daily_queue_id);
     };
 
@@ -550,36 +569,84 @@ export function DoctorQueueView() {
         }
     };
 
-    const handleDischarge = async (status?: string) => {
-        // If status is passed (e.g. "Completed"), close workspace and complete token
-        if (status === "Completed") {
-            const opdId = workspaceOpdId;
-            setWorkspaceOpdId(null);
-            if (activeQueue) {
-                const isCurrentToken = tokens.find(t => t.status === "In Progress" && t.opd_id === opdId);
-                if (isCurrentToken) {
-                    await handleTokenAction(isCurrentToken.token_id, "Completed");
-                } else {
-                    await loadTokens(activeQueue.daily_queue_id);
-                }
-            }
-        } else {
-            // Just refresh tokens to reflect discharge in the background, but keep workspace open for Follow-up Dialog
-            if (activeQueue) await loadTokens(activeQueue.daily_queue_id);
+    const handleOpenWorkspace = (opdId: number) => {
+        router.push(`/doctor/consultation/${opdId}`);
+    };
+
+    const handleResumeOPD = (opdId: number) => {
+        router.push(`/doctor/opd/${opdId}`);
+    };
+
+    const handleReturnPatient = async (opdId: number) => {
+        setActionLoading(-2);
+        try {
+            const res = await queuesService.generateReturnToken(opdId);
+            addToast(`Patient added back to queue as RETURN token #${res.token_number}`, "success");
+            loadQueue();
+            if (activeQueue) loadTokens(activeQueue.daily_queue_id);
+            loadReturnVisits();
+        } catch (e: any) {
+            addToast(e?.message || "Failed to add to queue", "error");
+        } finally {
+            setActionLoading(null);
+        }
+    };
+
+    // FIX 5: backend discharge handler auto-completes token; do NOT call updateTokenStatus again
+    const handleConfirmDischarge = async () => {
+        if (!dischargeConfig) return;
+        setActionLoading(-1);
+        try {
+            await opdService.updateVisit(dischargeConfig.opdId, { is_active: false });
+            addToast("Patient Discharged", "success");
+            setDischargeConfig(null);
+            if (activeQueue) loadTokens(activeQueue.daily_queue_id);
+            loadReturnVisits();
+        } catch (e: any) {
+            addToast(e?.message || "Failed to discharge", "error");
+        } finally {
+            setActionLoading(null);
         }
     };
 
     // ─── Derived ──────────────────────────────────────────────────────────────
 
-    const inProgressToken = tokens.find(t => t.status === "In Progress");
-    const waitingTokens = tokens.filter(t => t.status === "Waiting");
+    // FIX 6: removed broken inProgressToken (operator precedence + wrong status "EMERGENCY")
+    const actualInProgress = tokens.find(t => t.status === "In Progress");
+
+    const waitingTokens = tokens.filter(t => t.status === "Waiting").sort((a, b) => {
+        const priorityOrder: Record<string, number> = {
+            High: 1,
+            Medium: 2,
+            Normal: 3
+        };
+        const pA = priorityOrder[a.priority] || 3;
+        const pB = priorityOrder[b.priority] || 3;
+
+        return (pA - pB) || (a.token_number - b.token_number);
+    });
+
     const completedTokens = tokens.filter(t => t.status === "Completed");
     const skippedTokens = tokens.filter(t => t.status === "Skipped");
 
+    // Filter out return visits if they already have an active/pending token in the current queue block
+    const displayReturnVisits = returnVisits.filter(visit => {
+        return !tokens.some(t =>
+            t.opd_id === visit.opd_id &&
+            ["Waiting", "In Progress"].includes(t.status)
+        );
+    });
+
     // ─── Render ───────────────────────────────────────────────────────────────
 
-    if (isLoading) {
-        return <div className="flex items-center justify-center h-64 text-muted-foreground animate-pulse">Loading your queue...</div>;
+    // FIX 1 (doctorId race): don't render or call APIs until doctorId is resolved from context
+    if (!finalDoctorId || isLoading) {
+        return (
+            <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground">
+                <Loader2 className="h-7 w-7 animate-spin text-violet-500" />
+                <p className="text-sm font-medium">Loading your queue...</p>
+            </div>
+        );
     }
 
     return (
@@ -596,6 +663,7 @@ export function DoctorQueueView() {
                     <Button variant="outline" size="sm" onClick={() => {
                         loadQueue(true);
                         if (activeQueue) loadTokens(activeQueue.daily_queue_id);
+                        loadReturnVisits();
                     }} className="gap-2">
                         <RefreshCw className={cn("h-4 w-4", isRefreshing && "animate-spin")} /> Refresh
                     </Button>
@@ -658,7 +726,7 @@ export function DoctorQueueView() {
                     <div className="grid grid-cols-4 gap-3">
                         {[
                             { label: "Waiting", count: waitingTokens.length, color: "text-yellow-600", bg: "bg-yellow-50 border-yellow-200" },
-                            { label: "In Progress", count: inProgressToken ? 1 : 0, color: "text-blue-600", bg: "bg-blue-50 border-blue-200" },
+                            { label: "In Progress", count: actualInProgress ? 1 : 0, color: "text-blue-600", bg: "bg-blue-50 border-blue-200" },
                             { label: "Completed", count: completedTokens.length, color: "text-green-600", bg: "bg-green-50 border-green-200" },
                             { label: "Skipped", count: skippedTokens.length, color: "text-gray-500", bg: "bg-gray-50 border-gray-200" },
                         ].map(s => (
@@ -671,19 +739,36 @@ export function DoctorQueueView() {
                         ))}
                     </div>
 
-                    {/* Start Consultation (walk-in / unlinked token) */}
-                    {consultToken && activeQueue && (
-                        <StartConsultation
-                            token={consultToken}
-                            queue={activeQueue}
-                            hospitalGroupId={hospitalGroupId}
-                            onLinked={handleTokenLinked}
-                            onRevert={handleRevertToken}
-                        />
+                    {/* Start Consultation (walk-in / unlinked token) - Slide Over Sheet */}
+                    {activeQueue && (
+                        <Sheet open={!!consultToken} onOpenChange={open => { if (!open) setConsultToken(null); }}>
+                            <SheetContent side="right" className="w-[400px] sm:w-[540px] p-0 border-l sm:max-w-none">
+                                <SheetHeader className="p-6 border-b bg-muted/30">
+                                    <SheetTitle className="flex items-center gap-2">
+                                        <UserPlus className="h-5 w-5 text-primary" />
+                                        Patient Walk-in Registration
+                                    </SheetTitle>
+                                    <SheetDescription>
+                                        Register a walk-in patient or link an existing patient to this token.
+                                    </SheetDescription>
+                                </SheetHeader>
+                                <div className="p-6 overflow-y-auto max-h-[calc(100vh-140px)]">
+                                    {consultToken && (
+                                        <StartConsultation
+                                            token={consultToken}
+                                            queue={activeQueue}
+                                            hospitalGroupId={hospitalGroupId}
+                                            onLinked={handleTokenLinked}
+                                            onRevert={handleRevertToken}
+                                        />
+                                    )}
+                                </div>
+                            </SheetContent>
+                        </Sheet>
                     )}
 
                     {/* Now Serving */}
-                    {inProgressToken && !consultToken && (
+                    {actualInProgress && !consultToken && (
                         <div className="relative overflow-hidden rounded-xl border-2 border-blue-400 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-950/30 dark:to-blue-900/20 p-5 shadow-md">
                             <div className="absolute top-3 right-3 flex items-center gap-1.5 text-[10px] font-bold text-blue-600 uppercase tracking-wider bg-blue-100 border border-blue-200 rounded-full px-2.5 py-0.5">
                                 <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" />
@@ -691,32 +776,42 @@ export function DoctorQueueView() {
                             </div>
                             <div className="flex items-center gap-5">
                                 <div className="h-16 w-16 rounded-full bg-blue-500 text-white flex items-center justify-center text-2xl font-bold shadow-lg shrink-0">
-                                    {inProgressToken.token_number}
+                                    {actualInProgress.token_number}
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <p className="text-xs font-bold text-blue-600 uppercase tracking-widest mb-1">Token #{inProgressToken.token_number}</p>
-                                    <p className="font-semibold text-lg truncate">
-                                        {inProgressToken.opd_visits?.patients?.users_patients_user_idTousers?.full_name
-                                            || (inProgressToken.opd_id ? `OPD #${inProgressToken.opd_id}` : "Walk-in Patient")}
+                                    <p className="text-xs font-bold text-blue-600 uppercase tracking-widest mb-1">Token #{actualInProgress.token_number}</p>
+                                    <p className="font-semibold text-lg truncate flex items-center gap-2">
+                                        {(actualInProgress as any).appointments?.patients?.users_patients_user_idTousers?.full_name || actualInProgress.opd_visits?.patients?.users_patients_user_idTousers?.full_name
+                                            || (actualInProgress.opd_id ? `OPD #${actualInProgress.opd_id}` : "Walk-in Patient")}
+                                        {(actualInProgress as any).appointment_id && <span className="bg-purple-100 text-purple-700 text-[10px] px-2 py-0.5 rounded-full font-bold border border-purple-200 uppercase tracking-wider">Appointment</span>}
                                     </p>
                                     <div className="flex items-center gap-2 mt-3 flex-wrap">
-                                        {inProgressToken.opd_id && (
-                                            <Button size="sm" className="gap-1.5 text-white" onClick={() => setWorkspaceOpdId(inProgressToken.opd_id!)}>
-                                                <Stethoscope className="h-4 w-4" /> Open Workspace
-                                            </Button>
+                                        {actualInProgress.opd_id && (
+                                            <button
+                                                onClick={() => handleOpenWorkspace(actualInProgress.opd_id!)}
+                                                className="inline-flex items-center gap-1.5 h-8 px-3.5 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary/90 transition-all shadow-sm"
+                                            >
+                                                <Stethoscope className="h-3.5 w-3.5" /> Open Workspace
+                                            </button>
                                         )}
-                                        {!inProgressToken.opd_id && (
-                                            <Button size="sm" className="gap-1.5 text-white bg-indigo-600 hover:bg-indigo-700" onClick={() => setConsultToken(inProgressToken)}>
+                                        {!actualInProgress.opd_id && (
+                                            <Button size="sm" className="gap-1.5 text-white bg-indigo-600 hover:bg-indigo-700" onClick={() => handleCallToken(actualInProgress)} disabled={actionLoading === actualInProgress.token_id}>
                                                 <UserPlus className="h-4 w-4" /> Start Consultation
                                             </Button>
                                         )}
-                                        <Button size="sm" disabled={actionLoading === inProgressToken.token_id}
-                                            onClick={() => handleTokenAction(inProgressToken.token_id, "Completed")}
+                                        <Button size="sm" disabled={actionLoading === actualInProgress.token_id}
+                                            onClick={() => handleTokenAction(actualInProgress.token_id, "Completed")}
                                             className="gap-2 text-white bg-green-600 hover:bg-green-700 shadow-sm">
                                             <CheckCircle2 className="h-4 w-4" /> Done
                                         </Button>
-                                        <Button size="sm" variant="outline" disabled={actionLoading === inProgressToken.token_id}
-                                            onClick={() => handleTokenAction(inProgressToken.token_id, "Skipped")}
+                                        {actualInProgress.opd_id && (
+                                            <Button size="sm" variant="outline" className="gap-2 text-orange-600 border-orange-200 hover:bg-orange-50 bg-white"
+                                                onClick={() => setDischargeConfig({ opdId: actualInProgress.opd_id!, tokenId: actualInProgress.token_id })}>
+                                                <Flame className="h-4 w-4" /> Quick Discharge
+                                            </Button>
+                                        )}
+                                        <Button size="sm" variant="outline" disabled={actionLoading === actualInProgress.token_id}
+                                            onClick={() => handleTokenAction(actualInProgress.token_id, "Skipped")}
                                             className="gap-2 border-gray-300 text-gray-600 hover:bg-gray-100">
                                             <SkipForward className="h-4 w-4" /> Skip
                                         </Button>
@@ -727,7 +822,7 @@ export function DoctorQueueView() {
                     )}
 
                     {/* Call Next */}
-                    {!inProgressToken && waitingTokens.length > 0 && activeQueue.status === "Active" && (
+                    {!actualInProgress && waitingTokens.length > 0 && activeQueue.status === "Active" && (
                         <Button className="w-full h-14 text-white text-base font-semibold shadow-md gap-3"
                             disabled={actionLoading !== null}
                             onClick={() => handleCallToken(waitingTokens[0])}>
@@ -743,7 +838,7 @@ export function DoctorQueueView() {
                                 <Users className="h-4 w-4" /> Waiting ({waitingTokens.length})
                             </h3>
                             {waitingTokens.map((token, idx) => {
-                                const patientName = token.opd_visits?.patients?.users_patients_user_idTousers?.full_name;
+                                const patientName = (token as any).appointments?.patients?.users_patients_user_idTousers?.full_name || token.opd_visits?.patients?.users_patients_user_idTousers?.full_name;
                                 const isFirst = idx === 0;
                                 return (
                                     <div key={token.token_id} className="flex items-center gap-4 bg-card border rounded-lg px-4 py-3">
@@ -752,14 +847,17 @@ export function DoctorQueueView() {
                                             {token.token_number}
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                            <p className="font-medium text-sm truncate">
+                                            <p className="font-medium text-sm truncate flex items-center gap-2">
                                                 {patientName || (token.opd_id ? `OPD #${token.opd_id}` : "Walk-in Patient")}
+                                                {token.priority === "High" && <span className="bg-red-100 text-red-700 text-[10px] px-2 py-0.5 rounded-full font-bold border border-red-200 uppercase tracking-widest flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Emergency</span>}
+                                                {token.visit_type === "Appointment" && <span className="bg-purple-100 text-purple-700 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest border border-purple-200">Appointment</span>}
+                                                {token.visit_type === "Return" && <span className="bg-indigo-100 text-indigo-700 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest border border-indigo-200">Return</span>}
                                             </p>
                                             <p className="text-xs text-muted-foreground">
                                                 Issued {new Date(token.issued_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                                             </p>
                                         </div>
-                                        {isFirst && !inProgressToken && activeQueue.status === "Active" && (
+                                        {isFirst && !actualInProgress && activeQueue.status === "Active" && (
                                             <Button size="sm" disabled={actionLoading !== null}
                                                 onClick={() => handleCallToken(token)}
                                                 className="text-white gap-1.5 shrink-0">
@@ -785,7 +883,7 @@ export function DoctorQueueView() {
                                             {token.token_number}
                                         </div>
                                         <p className="text-xs truncate text-muted-foreground">
-                                            {token.opd_visits?.patients?.users_patients_user_idTousers?.full_name || "Walk-in"}
+                                            {(token as any).appointments?.patients?.users_patients_user_idTousers?.full_name || token.opd_visits?.patients?.users_patients_user_idTousers?.full_name || "Walk-in"}
                                         </p>
                                     </div>
                                 ))}
@@ -793,7 +891,34 @@ export function DoctorQueueView() {
                         </div>
                     )}
 
-                    {tokens.length === 0 && (
+                    {/* Return Patients */}
+                    {displayReturnVisits.length > 0 && (
+                        <div className="space-y-2">
+                            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+                                <RotateCcw className="h-4 w-4 text-indigo-500" /> Return Patients ({displayReturnVisits.length})
+                            </h3>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {displayReturnVisits.map(visit => {
+                                    const cTests = visit.opd_tests?.filter(t => t.test_status === "Completed") || [];
+                                    return (
+                                        <div key={visit.opd_id} className="flex items-center justify-between border-2 border-indigo-100 bg-indigo-50/30 p-3 rounded-lg shadow-sm">
+                                            <div>
+                                                <p className="font-medium text-sm">{visit.patients?.users_patients_user_idTousers?.full_name}</p>
+                                                <p className="text-xs text-indigo-600 font-medium">{cTests.length} completed test(s)</p>
+                                            </div>
+                                            <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm gap-1.5"
+                                                disabled={actionLoading !== null}
+                                                onClick={() => handleReturnPatient(visit.opd_id)}>
+                                                <Plus className="h-3.5 w-3.5" /> Add to Queue
+                                            </Button>
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        </div>
+                    )}
+
+                    {tokens.length === 0 && displayReturnVisits.length === 0 && (
                         <div className="flex flex-col items-center justify-center p-12 rounded-xl border border-dashed bg-muted/10 text-center gap-3">
                             <Hash className="h-10 w-10 text-muted-foreground/30" />
                             <p className="text-muted-foreground">No tokens issued yet. Queue is open and ready.</p>
@@ -802,23 +927,36 @@ export function DoctorQueueView() {
                 </div>
             )}
 
-            {/* OPD Workspace Modal */}
-            <Dialog open={!!workspaceOpdId} onOpenChange={open => { if (!open) setWorkspaceOpdId(null); }}>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto border-none shadow-2xl rounded-2xl">
-                    <DialogHeader className="flex flex-row items-center justify-between">
-                        <DialogTitle className="flex items-center gap-2">
-                            <Stethoscope className="h-5 w-5 text-primary" />
-                            <span className="font-bold text-lg">OPD Consultation</span>
-                        </DialogTitle>
-                    </DialogHeader>
-                    {workspaceOpdId && (
-                        <OpdWorkspace
-                            opdId={workspaceOpdId}
-                            onDischarge={handleDischarge}
-                        />
-                    )}
-                </DialogContent>
-            </Dialog>
+            {/* Discharge Warning Modal Overlay */}
+            {dischargeConfig && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in p-4">
+                    <Card className="w-full max-w-md shadow-xl animate-in zoom-in-95 border-red-100">
+                        <CardContent className="p-6">
+                            <div className="flex gap-4">
+                                <div className="h-10 w-10 shrink-0 rounded-full bg-red-100 flex items-center justify-center text-red-600">
+                                    <AlertTriangle className="h-5 w-5" />
+                                </div>
+                                <div className="space-y-2">
+                                    <h3 className="font-semibold text-lg">Quick Discharge Warning</h3>
+                                    <p className="text-sm text-muted-foreground">
+                                        No active diagnosis or prescription validation is performed from Quick Discharge. Recommended action is to discharge from the Consultation Workspace.
+                                    </p>
+                                    <p className="text-sm font-medium">Continue with discharge anyway?</p>
+                                </div>
+                            </div>
+                            <div className="mt-6 flex justify-end gap-3">
+                                <Button variant="outline" onClick={() => setDischargeConfig(null)} disabled={actionLoading !== null}>
+                                    Cancel
+                                </Button>
+                                <Button variant="destructive" onClick={handleConfirmDischarge} disabled={actionLoading !== null} className="gap-2">
+                                    {actionLoading === -1 ? <Loader2 className="h-4 w-4 animate-spin" /> : <Flame className="h-4 w-4" />}
+                                    Yes, Discharge Patient
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </div>
+            )}
         </div>
     );
 }
