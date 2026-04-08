@@ -495,7 +495,7 @@ export function BillingView({
             try {
               setIsSaving(true); // Re-engage saving state during verify
               await payBill(viewingReceipt.receiptid, {
-                payment_mode_id: 3, // Fallback to map "Online" to "Card"
+                payment_mode_id: 11, // Map "Online" to "Online Payment Gateway"
                 amount_paid: Number(paymentAmount),
                 reference_number: response.razorpay_payment_id,
               });
@@ -790,9 +790,8 @@ export function BillingView({
       const hospitalNameObj = encodeURIComponent("Nikunj Rathod");
       try {
         const amountStr = Number(balance).toFixed(2);
-        // Universal Wrapper: Use our Next.js /pay route as an intermediary step for generic cameras
-        const redirectBase = typeof window !== 'undefined' ? window.location.origin : 'https://opd-management-system.netlify.app';
-        const upiUri = `${redirectBase}/pay?pa=${upiId}&pn=${hospitalNameObj}&am=${amountStr}&tn=Bill%20${r.receiptnumber}`;
+        // Switch back to raw upi:// protocol so native UPI apps scan it instantly
+        const upiUri = `upi://pay?pa=${upiId}&pn=${hospitalNameObj}&am=${amountStr}&cu=INR&tn=Bill%20${r.receiptnumber}`;
         const qrDataUrl = await QRCode.toDataURL(upiUri, { width: 100, margin: 1 });
         
         doc.setFont('helvetica', 'bold');
