@@ -210,8 +210,8 @@ export interface Receipt {
     totalamount: number;
     paidamount?: number;
     paymentmodeid: string;
-    status: 'Paid' | 'Pending' | 'Refunded' | 'Cancelled' | 'Partially Paid';
-    billingstatus?: 'Draft' | 'Finalized' | 'Cancelled';
+    status: 'Paid' | 'Pending' | 'Refunded' | 'Cancelled' | 'Partially Paid' | 'Insurance Pending';
+     billingstatus?: 'Draft' | 'Finalized' | 'Cancelled';
     items: ReceiptItem[];
     patientName?: string;
     paymentModeName?: string;

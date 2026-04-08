@@ -58,6 +58,7 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import QRCode from "qrcode";
 import { useSocket } from "@/context/socket-context";
 import { useApi } from "@/hooks/use-api";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -85,6 +86,7 @@ const PAYMENT_MODES = [
   { label: "Net Banking", value: "4", requiresReference: true },
   { label: "Cheque", value: "5", requiresReference: true },
   { label: "Insurance Claim", value: "6", requiresReference: true },
+  { label: "Online (Razorpay)", value: "7", requiresReference: false, isRazorpay: true },
 ];
 
 export function BillingView({
@@ -454,6 +456,81 @@ export function BillingView({
       return;
     }
 
+    if ((selectedPaymentModeObj as any)?.isRazorpay) {
+      setIsSaving(true);
+      try {
+        // Load Script
+        const loadScript = () => {
+          return new Promise((resolve) => {
+            const script = document.createElement("script");
+            script.src = "https://checkout.razorpay.com/v1/checkout.js";
+            script.onload = () => resolve(true);
+            script.onerror = () => resolve(false);
+            document.body.appendChild(script);
+          });
+        };
+        const res = await loadScript();
+        if (!res) {
+          addToast("Failed to load Razorpay SDK", "error");
+          setIsSaving(false);
+          return;
+        }
+
+        // Fetch Order ID from backend
+        const { api } = await import("@/lib/api");
+        const orderData = await api.post<{ order_id: string; amount: number; currency: string }>(
+            `/billing/${viewingReceipt.receiptid}/razorpay-order`,
+            { amount_paid: Number(paymentAmount) }
+        );
+
+        const options = {
+          key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "",
+          amount: orderData.amount,
+          currency: orderData.currency,
+          name: hospitalId ? "Hospital Name" : "OPD Management System",
+          description: "Bill Payment",
+          order_id: orderData.order_id,
+          handler: async function (response: any) {
+            // Payment success callback
+            try {
+              setIsSaving(true); // Re-engage saving state during verify
+              await payBill(viewingReceipt.receiptid, {
+                payment_mode_id: 3, // Fallback to map "Online" to "Card"
+                amount_paid: Number(paymentAmount),
+                reference_number: response.razorpay_payment_id,
+              });
+              addToast("Payment via Razorpay successful", "success");
+              mutateReceipts();
+              setIsPayOpen(false);
+              setViewingReceipt(null);
+            } catch (e) {
+              addToast("Failed to verify payment", "error");
+            } finally {
+              setIsSaving(false);
+            }
+          },
+          prefill: {
+            name: viewingReceipt.patientName || "Walk-in Patient",
+            contact: "",
+          },
+          theme: {
+            color: "#6D28D9",
+          },
+        };
+
+        const rzp1 = new (window as any).Razorpay(options);
+        rzp1.on('payment.failed', function (response: any){
+            addToast(`Payment failed: ${response.error.description}`, "error");
+        });
+        rzp1.open();
+      } catch (err) {
+        addToast("Failed to initiate Razorpay checkout", "error");
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+
     setIsSaving(true);
     try {
       await payBill(viewingReceipt.receiptid, {
@@ -470,7 +547,7 @@ export function BillingView({
   };
 
   // PDF export — premium hospital invoice layout
-  const handleDownloadPDF = (r: Receipt) => {
+  const handleDownloadPDF = async (r: Receipt) => {
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     const pageW = doc.internal.pageSize.getWidth();
     const pageH = doc.internal.pageSize.getHeight();
@@ -693,15 +770,45 @@ export function BillingView({
     doc.text(r.status.toUpperCase(), summaryX + 25, sy + 4.8, { align: 'center' });
 
     // ── Payment reference (left side, aligned with summary top) ────────────
+    let currentLeftY = summaryY + 8;
     if (r.referenceNumber) {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(7);
       doc.setTextColor(109, 40, 217);
-      doc.text('PAYMENT REFERENCE', margin, summaryY + 8);
+      doc.text('PAYMENT REFERENCE', margin, currentLeftY);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(9);
       doc.setTextColor(40, 35, 80);
-      doc.text(r.referenceNumber, margin, summaryY + 15);
+      currentLeftY += 7;
+      doc.text(r.referenceNumber, margin, currentLeftY);
+      currentLeftY += 8;
+    }
+
+    // ── UPI QR Code (left side) ────────────
+    if (balance > 0 && r.status !== 'Insurance Pending' && r.status !== 'Paid') {
+      const upiId = process.env.NEXT_PUBLIC_UPI_ID || "";
+      const hospitalNameObj = encodeURIComponent("Nikunj Rathod");
+      try {
+        const amountStr = Number(balance).toFixed(2);
+        // Universal Wrapper: Use our Next.js /pay route as an intermediary step for generic cameras
+        const redirectBase = typeof window !== 'undefined' ? window.location.origin : 'https://opd-management-system.netlify.app';
+        const upiUri = `${redirectBase}/pay?pa=${upiId}&pn=${hospitalNameObj}&am=${amountStr}&tn=Bill%20${r.receiptnumber}`;
+        const qrDataUrl = await QRCode.toDataURL(upiUri, { width: 100, margin: 1 });
+        
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(7);
+        doc.setTextColor(109, 40, 217);
+        doc.text('SCAN TO PAY BALANCE', margin, currentLeftY);
+        
+        doc.addImage(qrDataUrl, 'PNG', margin, currentLeftY + 3, 25, 25);
+        
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(140, 130, 180);
+        doc.text('Accepts all UPI apps', margin, currentLeftY + 31);
+      } catch (err) {
+        console.error("Failed to generate QR Code", err);
+      }
     }
 
     // ── Footer bar ──────────────────────────────────────────────────────────
