@@ -387,7 +387,7 @@ export const downloadInvoicePDF = async (r: Receipt): Promise<void> => {
         [
             { key: "Name :", val: r.patientName || "Walk-in Patient" },
             { key: "ID :", val: r.patientid || "N/A" },
-            { key: "Age :", val: r.patientAge || "N/A" },
+            { key: "Age :", val: r.patientAge ? r.patientAge.toString() : "N/A" },
             { key: "Gender :", val: r.patientGender || "N/A" },
         ],
         M,
@@ -790,6 +790,7 @@ export const downloadLabReportPDF = async (test: any): Promise<void> => {
         border: [205, 215, 232] as [number, number, number],
         textDark: [30, 42, 62] as [number, number, number],
         textMid: [85, 100, 125] as [number, number, number],
+        altRow: [240, 245, 253] as [number, number, number],
     };
 
     const setFill = (...c: number[]) => doc.setFillColor(c[0], c[1], c[2]);

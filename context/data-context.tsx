@@ -223,6 +223,8 @@ export interface Receipt {
     hospitalContact?: string;
     hospitalEmail?: string;
     doctorName?: string;
+    patientAge?: number | string;
+    patientGender?: string;
 }
 
 export interface PharmacyPrescription {
