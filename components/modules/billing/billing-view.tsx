@@ -56,9 +56,7 @@ import {
 } from "lucide-react";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import jsPDF from "jspdf";
-import autoTable from "jspdf-autotable";
-import QRCode from "qrcode";
+import { downloadInvoicePDF } from "@/lib/pdf-generator";
 import { useSocket } from "@/context/socket-context";
 import { useApi } from "@/hooks/use-api";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -160,6 +158,10 @@ export function BillingView({
         paymentModeName: modeName,
         referenceNumber: latestPayment?.reference_number,
         discountamount: Number(b.discount_amount) || 0,
+        hospitalName: b.hospitals?.hospital_name,
+        hospitalAddress: b.hospitals?.address,
+        hospitalContact: b.hospitals?.contact_phone,
+        hospitalEmail: b.hospitals?.contact_email,
         items: b.bill_items?.map((item: any) => {
           let refId = item.reference_id ? item.reference_id.toString() : '';
           if (refId && !refId.includes('-')) {
@@ -177,10 +179,13 @@ export function BillingView({
             rate: Number(item.unit_price),
             amount: Number(item.total_price)
           };
-        }) || []
+        }) || [],
+        doctorName: opdVisits.find((v) => v.opdid?.toString() === b.visit_id?.toString())?.doctorName || b.doctorName || "Consultant",
+        patientAge: patients.find((p) => p.patientid?.toString() === b.patientid?.toString())?.age || "N/A",
+        patientGender: patients.find((p) => p.patientid?.toString() === b.patientid?.toString())?.gender || "N/A"
       };
     });
-  }, [rawBillingData]);
+  }, [rawBillingData, patients, opdVisits]);
 
   // UI state
   const [searchQuery, setSearchQuery] = useState("");
@@ -546,280 +551,9 @@ export function BillingView({
     finally { setIsSaving(false); }
   };
 
-  // PDF export — premium hospital invoice layout
+  // PDF export — centralized hospital invoice layout
   const handleDownloadPDF = async (r: Receipt) => {
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-    const pageW = doc.internal.pageSize.getWidth();
-    const pageH = doc.internal.pageSize.getHeight();
-    const margin = 15;
-
-    // ── Violet header bar ───────────────────────────────────────────────────
-    doc.setFillColor(109, 40, 217);
-    doc.rect(0, 0, pageW, 38, 'F');
-    doc.setFillColor(79, 70, 229);
-    doc.rect(pageW - 55, 0, 55, 38, 'F');
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(18);
-    doc.setTextColor(255, 255, 255);
-    doc.text('HOSPITAL INVOICE', margin, 17);
-
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(220, 210, 255);
-    doc.text('Tax Invoice / Receipt', margin, 24);
-    doc.text('OPD Management System', margin, 30);
-
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
-    doc.setTextColor(255, 255, 255);
-    doc.text('BILL NO.', pageW - 52, 13);
-    doc.setFontSize(9);
-    doc.text(r.receiptnumber || '-', pageW - 52, 20, { maxWidth: 48 });
-    doc.setFontSize(7.5);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(200, 190, 255);
-    doc.text(
-      new Date(r.receiptdate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
-      pageW - 52, 30
-    );
-
-    // ── Patient & Invoice info cards ────────────────────────────────────────
-    const infoY = 48;
-
-    // Left card — Billed To
-    doc.setFillColor(248, 247, 255);
-    doc.setDrawColor(220, 215, 250);
-    doc.roundedRect(margin, infoY, 85, 34, 3, 3, 'FD');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    doc.setTextColor(109, 40, 217);
-    doc.text('BILLED TO', margin + 4, infoY + 7);
-    doc.setFontSize(10);
-    doc.setTextColor(30, 27, 75);
-    doc.text(r.patientName || 'Walk-in Patient', margin + 4, infoY + 15, { maxWidth: 76 });
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.setTextColor(100, 90, 140);
-    doc.text(`Patient ID : ${r.patientid || 'N/A'}`, margin + 4, infoY + 23);
-    doc.text(`OPD Ref    : ${r.opdid || 'N/A'}`, margin + 4, infoY + 29);
-
-    // Right card — Invoice Details
-    const rightX = pageW - margin - 85;
-    doc.setFillColor(248, 247, 255);
-    doc.setDrawColor(220, 215, 250);
-    doc.roundedRect(rightX, infoY, 85, 34, 3, 3, 'FD');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    doc.setTextColor(109, 40, 217);
-    doc.text('INVOICE DETAILS', rightX + 4, infoY + 7);
-
-    const detailRows: [string, string][] = [
-      ['Invoice Date :', new Date(r.receiptdate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })],
-      ['Payment Mode :', r.paymentModeName || 'N/A'],
-      ['Status       :', r.status],
-    ];
-    if (r.referenceNumber) detailRows.push(['Ref No.      :', r.referenceNumber]);
-
-    detailRows.forEach(([label, value], idx) => {
-      const ry = infoY + 15 + idx * 6.5;
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.5);
-      doc.setTextColor(100, 90, 140);
-      doc.text(label, rightX + 4, ry);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(30, 27, 75);
-      doc.text(value, rightX + 38, ry);
-    });
-
-    // ── Items table ─────────────────────────────────────────────────────────
-    autoTable(doc, {
-      startY: infoY + 42,
-      margin: { left: margin, right: margin },
-      head: [[
-        'DESCRIPTION',
-        { content: 'QTY', styles: { halign: 'center' } },
-        { content: 'RATE (Rs.)', styles: { halign: 'right' } },
-        { content: 'AMOUNT (Rs.)', styles: { halign: 'right' } },
-      ]],
-      body: (r.items || []).map((item) => [
-        item.description || '-',
-        { content: String(item.qty ?? 1), styles: { halign: 'center' } },
-        { content: (item.rate || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), styles: { halign: 'right' } },
-        { content: (item.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }), styles: { halign: 'right' } },
-      ]),
-      headStyles: {
-        fillColor: [109, 40, 217],
-        textColor: [255, 255, 255],
-        fontStyle: 'bold',
-        fontSize: 8,
-        cellPadding: { top: 4, bottom: 4, left: 4, right: 4 },
-      },
-      bodyStyles: {
-        fontSize: 9,
-        cellPadding: { top: 3.5, bottom: 3.5, left: 4, right: 4 },
-        textColor: [40, 35, 80],
-      },
-      alternateRowStyles: { fillColor: [248, 247, 255] },
-      columnStyles: {
-        0: { cellWidth: 'auto' },
-        1: { cellWidth: 18 },
-        2: { cellWidth: 35 },
-        3: { cellWidth: 38 },
-      },
-      tableLineColor: [220, 215, 250],
-      tableLineWidth: 0.3,
-      showHead: 'everyPage',
-    });
-
-    // ── Summary box (right-aligned) ─────────────────────────────────────────
-    const summaryY = (doc as any).lastAutoTable.finalY + 8;
-    const summaryX = pageW - margin - 85;
-
-    const subtotal = Number(r.subtotalamount) || 0;
-    const tax = Number(r.taxamount) || 0;
-    const discount = Number(r.discountamount) || 0;
-    const total = Number(r.totalamount) || 0;
-    const paid = Number(r.paidamount) || 0;
-    const balance = total - paid;
-
-    const sumRows = [
-      { label: 'Subtotal', value: subtotal, negative: false },
-      { label: 'Tax', value: tax, negative: false },
-      ...(discount > 0 ? [{ label: 'Discount', value: discount, negative: true }] : []),
-    ];
-    const boxH = sumRows.length * 7.5 + 42;
-
-    doc.setFillColor(248, 247, 255);
-    doc.setDrawColor(220, 215, 250);
-    doc.roundedRect(summaryX, summaryY, 85, boxH, 3, 3, 'FD');
-
-    let sy = summaryY + 8;
-
-    // Section title
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7.5);
-    doc.setTextColor(109, 40, 217);
-    doc.text('SUMMARY', summaryX + 4, sy);
-    sy += 5;
-    doc.setDrawColor(220, 215, 250);
-    doc.line(summaryX + 2, sy, summaryX + 83, sy);
-    sy += 5;
-
-    // Sub-rows
-    sumRows.forEach(row => {
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8.5);
-      doc.setTextColor(100, 90, 140);
-      doc.text(row.label, summaryX + 4, sy);
-      const valStr = `${row.negative ? '- ' : ''}Rs. ${row.value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      doc.text(valStr, summaryX + 83, sy, { align: 'right' });
-      sy += 7.5;
-    });
-
-    // Total line
-    doc.setDrawColor(180, 160, 240);
-    doc.line(summaryX + 2, sy, summaryX + 83, sy);
-    sy += 5.5;
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10.5);
-    doc.setTextColor(30, 27, 75);
-    doc.text('TOTAL', summaryX + 4, sy);
-    doc.text(
-      `Rs. ${total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      summaryX + 83, sy, { align: 'right' }
-    );
-    sy += 7;
-
-    // Paid
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8.5);
-    doc.setTextColor(22, 163, 74);
-    doc.text('Amount Paid', summaryX + 4, sy);
-    doc.text(
-      `Rs. ${paid.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      summaryX + 83, sy, { align: 'right' }
-    );
-    sy += 7;
-
-    // Balance Due
-    const isCleared = balance <= 0;
-    doc.setTextColor(isCleared ? 22 : 220, isCleared ? 163 : 38, isCleared ? 74 : 38);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Balance Due', summaryX + 4, sy);
-    doc.text(
-      `Rs. ${Math.max(0, balance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-      summaryX + 83, sy, { align: 'right' }
-    );
-    sy += 7;
-
-    // Status pill
-    const statusPalette: Record<string, [number, number, number]> = {
-      'Paid': [22, 163, 74],
-      'Pending': [217, 119, 6],
-      'Insurance Pending': [139, 92, 246],
-      'Partially Paid': [37, 99, 235],
-      'Cancelled': [220, 38, 38],
-    };
-    const [pr, pg, pb] = statusPalette[r.status] || [109, 40, 217];
-    doc.setFillColor(pr, pg, pb);
-    doc.roundedRect(summaryX + 4, sy, 42, 7, 1.5, 1.5, 'F');
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(7);
-    doc.setTextColor(255, 255, 255);
-    doc.text(r.status.toUpperCase(), summaryX + 25, sy + 4.8, { align: 'center' });
-
-    // ── Payment reference (left side, aligned with summary top) ────────────
-    let currentLeftY = summaryY + 8;
-    if (r.referenceNumber) {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7);
-      doc.setTextColor(109, 40, 217);
-      doc.text('PAYMENT REFERENCE', margin, currentLeftY);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(9);
-      doc.setTextColor(40, 35, 80);
-      currentLeftY += 7;
-      doc.text(r.referenceNumber, margin, currentLeftY);
-      currentLeftY += 8;
-    }
-
-    // ── UPI QR Code (left side) ────────────
-    if (balance > 0 && r.status !== 'Insurance Pending' && r.status !== 'Paid') {
-      const upiId = process.env.NEXT_PUBLIC_UPI_ID || "";
-      const hospitalNameObj = encodeURIComponent("Nikunj Rathod");
-      try {
-        const amountStr = Number(balance).toFixed(2);
-        // Switch back to raw upi:// protocol so native UPI apps scan it instantly
-        const upiUri = `upi://pay?pa=${upiId}&pn=${hospitalNameObj}&am=${amountStr}&cu=INR&tn=Bill%20${r.receiptnumber}`;
-        const qrDataUrl = await QRCode.toDataURL(upiUri, { width: 100, margin: 1 });
-        
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(7);
-        doc.setTextColor(109, 40, 217);
-        doc.text('SCAN TO PAY BALANCE', margin, currentLeftY);
-        
-        doc.addImage(qrDataUrl, 'PNG', margin, currentLeftY + 3, 25, 25);
-        
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(7);
-        doc.setTextColor(140, 130, 180);
-        doc.text('Accepts all UPI apps', margin, currentLeftY + 31);
-      } catch (err) {
-        console.error("Failed to generate QR Code", err);
-      }
-    }
-
-    // ── Footer bar ──────────────────────────────────────────────────────────
-    doc.setFillColor(245, 243, 255);
-    doc.rect(0, pageH - 18, pageW, 18, 'F');
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(7);
-    doc.setTextColor(140, 130, 180);
-    doc.text('This is a computer-generated invoice. No signature required.', pageW / 2, pageH - 10, { align: 'center' });
-    doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`, pageW / 2, pageH - 5, { align: 'center' });
-
-    doc.save(`invoice-${r.receiptnumber}.pdf`);
+    await downloadInvoicePDF(r);
   };
 
 

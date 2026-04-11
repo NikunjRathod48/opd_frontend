@@ -15,7 +15,7 @@ import { DialogFooter, Dialog, DialogContent, DialogTitle, DialogDescription } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip } from "@/components/ui/tooltip";
-import { Search, PackagePlus, Loader2, FlaskConical, X } from "lucide-react";
+import { Search, PackagePlus, Loader2, FlaskConical, X, Plus, Trash2 } from "lucide-react";
 import { useApi } from "@/hooks/use-api";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { motion } from "framer-motion";
@@ -488,74 +488,167 @@ function TestForm({
         price: initialData.price || 0,
         is_active: initialData.is_active ?? true
     });
+    const [parameters, setParameters] = useState<{ parameter_name: string, unit: string, normal_range: string }[]>(
+        (initialData as any).test_parameters || []
+    );
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleSubmit = async () => {
         setIsSubmitting(true);
         try {
-            await onSubmit(formData);
+            const submitData: any = { ...formData };
+            if (!isHospitalAdmin) {
+                submitData.test_parameters = {
+                    deleteMany: {},
+                    create: parameters.filter(p => p.parameter_name.trim() !== '')
+                };
+            }
+            await onSubmit(submitData);
         } finally {
             setIsSubmitting(false);
         }
     };
 
     return (
-        <div className="space-y-4 py-2">
-            <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                    <Label>Test Name</Label>
-                    <Input disabled={isHospitalAdmin} value={formData.test_name} onChange={e => setFormData({ ...formData, test_name: e.target.value })} placeholder="e.g. CBC" />
-                </div>
-                <div className="space-y-2">
-                    <Label>Test Code</Label>
-                    <Input disabled={isHospitalAdmin} value={formData.test_code} onChange={e => setFormData({ ...formData, test_code: e.target.value })} placeholder="UNIQUE CODE" />
-                </div>
-            </div>
+        <div className="flex flex-col max-h-[85vh]">
+            <ScrollArea className="flex-1 pr-4 -mr-4">
+                <div className="space-y-4 py-2">
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label>Test Name</Label>
+                            <Input disabled={isHospitalAdmin} value={formData.test_name} onChange={e => setFormData({ ...formData, test_name: e.target.value })} placeholder="e.g. CBC" />
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Test Code</Label>
+                            <Input disabled={isHospitalAdmin} value={formData.test_code} onChange={e => setFormData({ ...formData, test_code: e.target.value })} placeholder="UNIQUE CODE" />
+                        </div>
+                    </div>
 
-            <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                    <Label>Department</Label>
-                    <Select
-                        value={String(formData.department_id)}
-                        onValueChange={(val) => setFormData({ ...formData, department_id: Number(val) })}
-                        disabled={isHospitalAdmin}
-                    >
-                        <SelectTrigger>
-                            <SelectValue placeholder="Select Dept" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            {departments.map(d => (
-                                <SelectItem key={d.department_id} value={String(d.department_id)}>{d.department_name}</SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
-                </div>
-                <div className="space-y-2">
-                    <Label>Test Type</Label>
-                    <Input disabled={isHospitalAdmin} value={formData.test_type} onChange={e => setFormData({ ...formData, test_type: e.target.value })} placeholder="e.g. Pathology, Radiology" />
-                </div>
-            </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label>Department</Label>
+                            <Select
+                                value={String(formData.department_id)}
+                                onValueChange={(val) => setFormData({ ...formData, department_id: Number(val) })}
+                                disabled={isHospitalAdmin}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue placeholder="Select Dept" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {departments.map(d => (
+                                        <SelectItem key={d.department_id} value={String(d.department_id)}>{d.department_name}</SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Test Type</Label>
+                            <Input disabled={isHospitalAdmin} value={formData.test_type} onChange={e => setFormData({ ...formData, test_type: e.target.value })} placeholder="e.g. Pathology, Radiology" />
+                        </div>
+                    </div>
 
-            <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                    <Label>Description</Label>
-                    <Input disabled={isHospitalAdmin} value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })} placeholder="Details..." />
-                </div>
-                <div className="space-y-2">
-                    <Label>{isHospitalAdmin ? "Hospital Price (₹)" : "Base Price (₹)"}</Label>
-                    <Input type="number" value={formData.price} onChange={e => setFormData({ ...formData, price: Number(e.target.value) })} placeholder="0.00" />
-                    {isHospitalAdmin && (initialData as Partial<Test> & { base_price?: number })?.base_price !== undefined && (
-                        <p className="text-xs text-muted-foreground mt-1">Master Price: ₹{(initialData as Partial<Test> & { base_price?: number }).base_price}</p>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label>Description</Label>
+                            <Input disabled={isHospitalAdmin} value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })} placeholder="Details..." />
+                        </div>
+                        <div className="space-y-2">
+                            <Label>{isHospitalAdmin ? "Hospital Price (₹)" : "Base Price (₹)"}</Label>
+                            <Input type="number" value={formData.price} onChange={e => setFormData({ ...formData, price: Number(e.target.value) })} placeholder="0.00" />
+                            {isHospitalAdmin && (initialData as Partial<Test> & { base_price?: number })?.base_price !== undefined && (
+                                <p className="text-xs text-muted-foreground mt-1">Master Price: ₹{(initialData as Partial<Test> & { base_price?: number }).base_price}</p>
+                            )}
+                        </div>
+                    </div>
+
+                    {!isHospitalAdmin && (
+                        <div className="mt-6 border border-border/60 rounded-xl overflow-hidden bg-slate-50/50 dark:bg-slate-900/50">
+                            <div className="px-4 py-3 bg-white dark:bg-slate-800 border-b border-border/60 flex justify-between items-center">
+                                <div>
+                                    <Label className="text-sm font-bold text-foreground">Diagnostic Parameters</Label>
+                                    <p className="text-xs text-muted-foreground">Define the template for lab results.</p>
+                                </div>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="secondary"
+                                    onClick={() => setParameters([...parameters, { parameter_name: '', unit: '', normal_range: '' }])}
+                                    className="bg-blue-50 text-blue-700 hover:bg-blue-100 h-8 text-xs font-semibold"
+                                >
+                                    <Plus className="w-3.5 h-3.5 mr-1" /> Add Parameter
+                                </Button>
+                            </div>
+                            <div className="max-h-[300px] overflow-y-auto scrollbar-thin">
+                                <div className="p-4 space-y-3">
+                                    {parameters.length === 0 ? (
+                                        <p className="text-sm text-muted-foreground text-center py-4">No parameters defined. The test results will be unstructured text.</p>
+                                    ) : (
+                                        parameters.map((param, i) => (
+                                            <div key={i} className="flex items-start gap-2 animate-in slide-in-from-bottom-2">
+                                                <div className="grid grid-cols-12 gap-2 flex-1">
+                                                    <div className="col-span-12 md:col-span-5 relative">
+                                                        <Input 
+                                                            placeholder="Parameter Name (e.g. Hemoglobin)" 
+                                                            value={param.parameter_name}
+                                                            onChange={(e) => {
+                                                                const newP = [...parameters];
+                                                                newP[i].parameter_name = e.target.value;
+                                                                setParameters(newP);
+                                                            }}
+                                                            className="h-9 bg-white"
+                                                            autoFocus
+                                                        />
+                                                    </div>
+                                                    <div className="col-span-6 md:col-span-3">
+                                                        <Input 
+                                                            placeholder="Unit (e.g. g/dL)" 
+                                                            value={param.unit}
+                                                            onChange={(e) => {
+                                                                const newP = [...parameters];
+                                                                newP[i].unit = e.target.value;
+                                                                setParameters(newP);
+                                                            }}
+                                                            className="h-9 bg-white"
+                                                        />
+                                                    </div>
+                                                    <div className="col-span-6 md:col-span-4">
+                                                        <Input 
+                                                            placeholder="Range (e.g. 13.0 - 17.0)" 
+                                                            value={param.normal_range}
+                                                            onChange={(e) => {
+                                                                const newP = [...parameters];
+                                                                newP[i].normal_range = e.target.value;
+                                                                setParameters(newP);
+                                                            }}
+                                                            className="h-9 bg-white"
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <Button 
+                                                    variant="ghost" 
+                                                    size="icon"
+                                                    className="h-9 w-9 text-rose-500 hover:bg-rose-50 hover:text-rose-600 shrink-0"
+                                                    onClick={() => setParameters(parameters.filter((_, idx) => idx !== i))}
+                                                >
+                                                    <Trash2 className="h-4 w-4" />
+                                                </Button>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                        </div>
                     )}
+
+                    <div className="flex items-center justify-between pt-2">
+                        <Label>{isHospitalAdmin ? "Active in Hospital" : "Active Status"}</Label>
+                        <Switch checked={formData.is_active} onCheckedChange={(c) => setFormData({ ...formData, is_active: c })} />
+                    </div>
                 </div>
-            </div>
+            </ScrollArea>
 
-            <div className="flex items-center justify-between pt-2">
-                <Label>{isHospitalAdmin ? "Active in Hospital" : "Active Status"}</Label>
-                <Switch checked={formData.is_active} onCheckedChange={(c) => setFormData({ ...formData, is_active: c })} />
-            </div>
-
-            <DialogFooter className="mt-4">
+            <DialogFooter className="mt-4 shrink-0">
                 <Button variant="outline" onClick={onClose} disabled={isSubmitting}>Cancel</Button>
                 <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md hover:shadow-lg transition-all rounded-lg h-9" onClick={handleSubmit} disabled={isSubmitting}>
                     {isSubmitting ? (

@@ -2,6 +2,7 @@
 
 import { useAuth, UserRole } from "@/context/auth-context";
 import { useData, PharmacyPrescription, Medicine } from "@/context/data-context";
+import { downloadInvoicePDF } from "@/lib/pdf-generator";
 import { RoleGuard } from "@/components/auth/role-guard";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -41,6 +42,7 @@ export function PharmacyView() {
     medicines,
     fetchMedicines,
     updateMedicine,
+    getReceipt,
   } = useData();
   const { addToast } = useToast();
 
@@ -48,6 +50,7 @@ export function PharmacyView() {
   const [prescriptions, setPrescriptions] = useState<PharmacyPrescription[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dispensingId, setDispensingId] = useState<number | null>(null);
+  const [selectedItems, setSelectedItems] = useState<Record<number, number[]>>({});
   const [searchRx, setSearchRx] = useState("");
   const [searchMed, setSearchMed] = useState("");
 
@@ -61,6 +64,17 @@ export function PharmacyView() {
       setIsLoading(true);
       const data = await fetchPendingPrescriptions(user.hospitalid.toString());
       setPrescriptions(data || []);
+      
+      // Auto-select all pending items for convenience
+      if (data) {
+        const initialSelections: Record<number, number[]> = {};
+        data.forEach(rx => {
+           initialSelections[rx.prescription_id] = rx.prescription_items
+            .filter((item: any) => item.status === 'Pending')
+            .map((item: any) => item.prescription_item_id);
+        });
+        setSelectedItems(initialSelections);
+      }
     } catch (e) {
       addToast("Failed to load pending prescriptions", "error");
     } finally {
@@ -70,19 +84,53 @@ export function PharmacyView() {
 
   useEffect(() => {
     if (user?.hospitalid) {
+      fetchMedicines(); // Always fetch inventory on mount or tab change to have stock numbers
       if (activeTab === "dispense") {
         loadPrescriptions();
-      } else {
-        fetchMedicines();
       }
     }
   }, [user?.hospitalid, activeTab]);
 
+  const toggleItemSelection = (rxId: number, itemId: number) => {
+    setSelectedItems(prev => {
+      const current = prev[rxId] || [];
+      if (current.includes(itemId)) {
+        return { ...prev, [rxId]: current.filter(id => id !== itemId) };
+      }
+      return { ...prev, [rxId]: [...current, itemId] };
+    });
+  };
+
   const handleDispense = async (rxId: number) => {
     try {
+      const rx = prescriptions.find(r => r.prescription_id === rxId);
+      let itemIds = selectedItems[rxId] || [];
+      
+      // Defensively filter out items that are out of stock just in case they were checked initially
+      itemIds = itemIds.filter(id => {
+         const pItem = rx?.prescription_items.find((i:any) => i.prescription_item_id === id);
+         const medInv = medicines.find(m => String(m.medicine_id) === String(pItem?.medicine_id));
+         const stock = medInv?.stock_quantity || 0;
+         return stock >= (pItem?.quantity || 1);
+      });
+
+      if (!itemIds || itemIds.length === 0) {
+        addToast("Please select at least one available medicine to dispense.", "error");
+        return;
+      }
+      
       setDispensingId(rxId);
-      await dispensePrescription(rxId.toString());
-      addToast("Prescription dispensed correctly. Stock has been deducted.", "success");
+      const res = await dispensePrescription(rxId.toString(), itemIds);
+      addToast("Prescription dispensed partially. Stock has been deducted.", "success");
+      
+      if (res && res.new_bill_id) {
+        const receipt = await getReceipt(res.new_bill_id.toString());
+        if (receipt) {
+           await downloadInvoicePDF(receipt);
+           addToast("Pharmacy Bill generated and exported.", "info");
+        }
+      }
+
       loadPrescriptions();
       fetchMedicines(); // Refresh stock in background
     } catch (e: any) {
@@ -232,8 +280,8 @@ export function PharmacyView() {
                                     OPD: {rx.opd_visits?.opd_no || "-"}
                                   </p>
                                 </div>
-                                <Badge variant="outline" className="bg-orange-50 text-orange-600 border-orange-200">
-                                  Pending
+                                <Badge variant="outline" className={cn(rx.status === 'Partially Dispensed' ? "bg-blue-50 text-blue-600 border-blue-200" : "bg-orange-50 text-orange-600 border-orange-200")}>
+                                  {rx.status || 'Pending'}
                                 </Badge>
                               </div>
 
@@ -245,17 +293,47 @@ export function PharmacyView() {
                               <div className="space-y-3">
                                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Medicines ({rx.prescription_items?.length || 0})</h4>
                                 <div className="space-y-2">
-                                  {rx.prescription_items?.map((item: any) => (
-                                    <div key={item.prescription_item_id} className="bg-slate-50 dark:bg-slate-800/50 p-2.5 rounded-lg text-xs flex justify-between items-center group/item hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition-colors">
-                                      <div>
-                                        <p className="font-bold text-slate-700 dark:text-slate-300">{item.medicines?.medicine_name}</p>
-                                        <p className="text-slate-500">{item.dosage} · {item.duration_days} days</p>
+                                  {rx.prescription_items?.map((item: any) => {
+                                    const medInv = medicines.find(m => String(m.medicine_id) === String(item.medicine_id));
+                                    const stockQty = medInv?.stock_quantity || 0;
+
+                                    const isOutOfStock = stockQty === 0;
+                                    const isInsufficientStock = stockQty > 0 && stockQty < item.quantity;
+                                    const canDispense = stockQty >= item.quantity;
+                                    
+                                    const isDispensed = item.status === 'Dispensed';
+                                    const isSelected = selectedItems[rx.prescription_id]?.includes(item.prescription_item_id) ?? false;
+                                    return (
+                                      <div key={item.prescription_item_id} className={cn("p-2.5 rounded-lg text-xs flex justify-between items-center group/item transition-colors", isDispensed ? "bg-slate-100 dark:bg-slate-800/80 opacity-60" : "bg-slate-50 dark:bg-slate-800/50 hover:bg-emerald-50 dark:hover:bg-emerald-500/10")}>
+                                        <div className="flex items-center gap-3">
+                                          {!isDispensed ? (
+                                            <input 
+                                              type="checkbox" 
+                                              checked={isSelected && canDispense}
+                                              disabled={!canDispense}
+                                              onChange={() => toggleItemSelection(rx.prescription_id, item.prescription_item_id)}
+                                              className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500 cursor-pointer disabled:opacity-50"
+                                            />
+                                          ) : (
+                                            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                                          )}
+                                          <div>
+                                            <p className="font-bold text-slate-700 dark:text-slate-300">
+                                              {item.medicines?.medicine_name} 
+                                              {isDispensed && <span className="text-emerald-500 font-normal ml-1">(Dispensed)</span>}
+                                              {!isDispensed && isOutOfStock && <span className="text-red-500 font-normal ml-2 px-1.5 py-0.5 rounded-sm bg-red-100 dark:bg-red-900/40 border border-red-200 dark:border-red-800 text-[10px] uppercase tracking-wider">Out of stock</span>}
+                                              {!isDispensed && isInsufficientStock && <span className="text-red-500 font-normal ml-2 px-1.5 py-0.5 rounded-sm bg-red-100 dark:bg-red-900/40 border border-red-200 dark:border-red-800 text-[10px] uppercase tracking-wider">Insufficient: {stockQty} left</span>}
+                                              {!isDispensed && canDispense && stockQty <= 10 && <span className="text-orange-500 font-normal ml-2 px-1.5 py-0.5 rounded-sm bg-orange-100 dark:bg-orange-900/40 border border-orange-200 dark:border-orange-800 text-[10px] uppercase tracking-wider">Low stock: {stockQty}</span>}
+                                            </p>
+                                            <p className="text-slate-500">{item.dosage} · {item.duration_days} days</p>
+                                          </div>
+                                        </div>
+                                        <div className="font-extrabold text-slate-900 dark:text-white bg-white dark:bg-slate-800 px-2 py-1 rounded shadow-sm border border-slate-100">
+                                          x{item.quantity}
+                                        </div>
                                       </div>
-                                      <div className="font-extrabold text-slate-900 dark:text-white bg-white dark:bg-slate-800 px-2 py-1 rounded shadow-sm border border-slate-100">
-                                        x{item.quantity}
-                                      </div>
-                                    </div>
-                                  ))}
+                                    );
+                                  })}
                                 </div>
                               </div>
                             </div>
@@ -263,15 +341,15 @@ export function PharmacyView() {
                             <div className="p-4 bg-slate-50 border-t border-slate-100 dark:bg-slate-800/50 dark:border-slate-800 mt-auto">
                               <Button
                                 onClick={() => handleDispense(rx.prescription_id)}
-                                disabled={dispensingId === rx.prescription_id}
-                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md shadow-emerald-500/20"
+                                disabled={dispensingId === rx.prescription_id || !selectedItems[rx.prescription_id]?.length}
+                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md shadow-emerald-500/20 disabled:opacity-50"
                               >
                                 {dispensingId === rx.prescription_id ? (
                                   <Loader2 className="h-4 w-4 animate-spin mr-2" />
                                 ) : (
                                   <CheckCircle2 className="h-4 w-4 mr-2" />
                                 )}
-                                Dispense & Deduct Stock
+                                Dispense Selected
                               </Button>
                             </div>
                           </div>

@@ -19,6 +19,7 @@ export interface User {
     joiningDate?: string;
     profile_image_url?: string;
     employeeid?: string;
+    id?: string; // added id alias from auth context
 }
 
 export interface HospitalGroup {
@@ -217,6 +218,11 @@ export interface Receipt {
     paymentModeName?: string;
     referenceNumber?: string;
     patientid?: string;
+    hospitalName?: string;
+    hospitalAddress?: string;
+    hospitalContact?: string;
+    hospitalEmail?: string;
+    doctorName?: string;
 }
 
 export interface PharmacyPrescription {
@@ -225,7 +231,7 @@ export interface PharmacyPrescription {
     doctor_id: number;
     prescribed_date: string;
     notes?: string;
-    status: 'Pending' | 'Dispensed';
+    status: 'Pending' | 'Dispensed' | 'Partially Dispensed';
     prescription_items: any[];
     doctors?: any;
     opd_visits?: any;
@@ -348,10 +354,12 @@ interface DataContextType {
     fetchReceipts: () => Promise<void>;
     getOpdDetails: (id: string) => Promise<any>;
     fetchPendingPrescriptions: (hospitalId: string) => Promise<PharmacyPrescription[]>;
-    dispensePrescription: (id: string) => Promise<void>;
+    dispensePrescription: (id: string, itemIds: number[]) => Promise<any>;
     fetchMedicines: () => Promise<void>;
     fetchPendingLabTests: (hospitalId: string) => Promise<LaboratoryTest[]>;
+    fetchCompletedLabTests: (hospitalId: string) => Promise<LaboratoryTest[]>;
     updateLabTestResult: (id: string, status: string, summary?: string) => Promise<void>;
+    getReceipt: (id: string) => Promise<Receipt | null>;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -638,6 +646,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
                     receiptdate: b.created_at,
                     subtotalamount: Number(b.subtotal_amount),
                     taxamount: Number(b.tax_amount),
+                    discountamount: Number(b.discount_amount) || 0,
                     totalamount: Number(b.total_amount),
                     paymentmodeid: modeId,
                     status: mappedStatus,
@@ -646,6 +655,13 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
                     patientid: b.patientid?.toString() || '',
                     paymentModeName: modeName,
                     referenceNumber: latestPayment?.reference_number,
+                    hospitalName: b.hospitals?.hospital_name,
+                    hospitalAddress: b.hospitals?.address,
+                    hospitalContact: b.hospitals?.contact_phone,
+                    hospitalEmail: b.hospitals?.contact_email,
+                    doctorName: b.opd_visits?.doctors?.users_doctors_user_idTousers?.full_name || b.doctorName || "Consultant",
+                    patientAge: b.patients?.dob ? new Date().getFullYear() - new Date(b.patients.dob).getFullYear() : "N/A",
+                    patientGender: b.patients?.gender || "N/A",
                     items: b.bill_items?.map((item: any) => {
                         let refId = item.reference_id ? item.reference_id.toString() : '';
                         if (refId && !refId.includes('-')) {
@@ -1131,12 +1147,75 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         }
     };
 
-    const dispensePrescription = async (id: string) => {
+    const dispensePrescription = async (id: string, itemIds?: number[]) => {
         try {
-            await import("@/lib/api").then(m => m.api.post(`/prescriptions/${id}/dispense`, {}));
+            const data = await import("@/lib/api").then(m => m.api.post(`/prescriptions/${id}/dispense`, { itemIds }));
+            return data;
         } catch (err) {
             console.error(err);
             throw err;
+        }
+    };
+
+    const getReceipt = async (id: string): Promise<Receipt | null> => {
+        try {
+            const b = await import("@/lib/api").then(m => m.api.get<any>(`/billing/${id}`));
+            if (!b) return null;
+            const successPayments = (b.payments || []).filter((p: any) => p.payment_status === 'Success');
+            const latestPayment = successPayments.length > 0 ? successPayments[successPayments.length - 1] : null;
+            const modeName = latestPayment?.payment_modes?.payment_mode_name || b.paymentModeName || 'Cash';
+            const modeId = latestPayment?.payment_mode_id?.toString() || '1';
+            let mappedStatus: Receipt['status'] = 'Pending';
+            if (b.payment_status === 'Paid') mappedStatus = 'Paid';
+            else if (b.payment_status === 'Partially Paid') mappedStatus = 'Partially Paid';
+            else if (b.payment_status === 'Insurance Pending') mappedStatus = 'Insurance Pending' as any;
+            else if (b.payment_status === 'Cancelled') mappedStatus = 'Cancelled';
+            return {
+                receiptid: b.bill_id.toString(),
+                hospitalid: b.hospital_id.toString(),
+                opdid: b.visit_id?.toString(),
+                receiptnumber: b.bill_number,
+                receiptdate: b.created_at,
+                subtotalamount: Number(b.subtotal_amount),
+                taxamount: Number(b.tax_amount),
+                totalamount: Number(b.total_amount),
+                paymentmodeid: modeId,
+                status: mappedStatus,
+                paidamount: successPayments.reduce((sum: number, p: any) => sum + Number(p.amount_paid), 0),
+                patientName: b.patientName || 'Unknown',
+                patientid: b.patientid?.toString() || '',
+                paymentModeName: modeName,
+                referenceNumber: latestPayment?.reference_number,
+                hospitalName: b.hospitals?.hospital_name,
+                hospitalAddress: b.hospitals?.address,
+                hospitalContact: b.hospitals?.contact_phone,
+                hospitalEmail: b.hospitals?.contact_email,
+                discountamount: Number(b.discount_amount) || 0,
+                doctorName: b.opd_visits?.doctors?.users_doctors_user_idTousers?.full_name || b.doctorName || "Consultant",
+                patientAge: b.patients?.dob ? new Date().getFullYear() - new Date(b.patients.dob).getFullYear() : "N/A",
+                patientGender: b.patients?.gender || "N/A",
+                items: b.bill_items?.map((item: any) => {
+                    let refId = item.reference_id ? item.reference_id.toString() : '';
+                    if (refId && !refId.includes('-')) {
+                        if (item.item_type === 'Procedure') refId = `TRT-${refId}`;
+                        else if (item.item_type === 'Test') refId = `TST-${refId}`;
+                        else if (item.item_type === 'Medicine') refId = `MED-${refId}`;
+                    } else if (!refId) {
+                        refId = `CUSTOM-${item.bill_item_id}`;
+                    }
+                    return {
+                        receiptitemid: item.bill_item_id.toString(),
+                        subtreatmenttypeid: refId,
+                        description: item.item_description,
+                        qty: item.quantity,
+                        rate: Number(item.unit_price),
+                        amount: Number(item.total_price)
+                    };
+                }) || []
+            };
+        } catch(err) {
+            console.error(err);
+            return null;
         }
     };
 
@@ -1158,6 +1237,16 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     const fetchPendingLabTests = async (hospitalId: string) => {
         try {
             const data = await import("@/lib/api").then(m => m.api.get(`/opd-tests/pending/hospital/${hospitalId}`));
+            return data as LaboratoryTest[];
+        } catch (err) {
+            console.error(err);
+            throw err;
+        }
+    };
+
+    const fetchCompletedLabTests = async (hospitalId: string) => {
+        try {
+            const data = await import("@/lib/api").then(m => m.api.get(`/opd-tests/completed/hospital/${hospitalId}`));
             return data as LaboratoryTest[];
         } catch (err) {
             console.error(err);
@@ -1213,7 +1302,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         fetchReceipts,
         getOpdDetails,
         fetchPendingLabTests,
-        updateLabTestResult
+        fetchCompletedLabTests,
+        updateLabTestResult,
+        getReceipt
     };
 
     return (
