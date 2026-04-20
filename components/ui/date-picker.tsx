@@ -57,6 +57,7 @@ export function DatePicker({
     maxDate,
 }: DatePickerProps) {
     const containerRef = React.useRef<HTMLDivElement>(null);
+    const dropdownRef = React.useRef<HTMLDivElement>(null);
     const dayRef = React.useRef<HTMLInputElement>(null);
     const monRef = React.useRef<HTMLInputElement>(null);
     const yrRef = React.useRef<HTMLInputElement>(null);
@@ -101,6 +102,16 @@ export function DatePicker({
         };
         if (isOpen) document.addEventListener("mousedown", handler);
         return () => document.removeEventListener("mousedown", handler);
+    }, [isOpen]);
+
+    // Auto-scroll dropdown into view when it opens
+    React.useEffect(() => {
+        if (!isOpen || !dropdownRef.current) return;
+        // Small delay so the dropdown is painted before measuring
+        const id = requestAnimationFrame(() => {
+            dropdownRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+        return () => cancelAnimationFrame(id);
     }, [isOpen]);
 
     // Every time segments change, try to commit the date
@@ -292,6 +303,31 @@ export function DatePicker({
                     />
                 </div>
 
+                {/* Today pill inside the input bar */}
+                {!hasValue && !disabled && (
+                    <button
+                        type="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            const today = new Date();
+                            const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+                            if (minDate && todayStr < minDate) return;
+                            if (maxDate && todayStr > maxDate) return;
+                            setNavYear(today.getFullYear());
+                            setNavMonth(today.getMonth());
+                            setView("days");
+                            onChange(todayStr);
+                            setDd(String(today.getDate()).padStart(2, "0"));
+                            setMm(String(today.getMonth() + 1).padStart(2, "0"));
+                            setYyyy(String(today.getFullYear()));
+                            setIsOpen(false);
+                        }}
+                        className="text-[10px] font-bold text-blue-500 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/40 px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-700 uppercase tracking-wider transition-colors leading-4 shrink-0"
+                    >
+                        Today
+                    </button>
+                )}
+
                 {/* Clear button */}
                 {hasValue && !disabled && (
                     <button
@@ -306,7 +342,7 @@ export function DatePicker({
 
             {/* ── Dropdown Calendar ── */}
             {isOpen && (
-                <div className="absolute top-[calc(100%+6px)] left-0 z-50 w-[290px] rounded-xl border bg-popover text-popover-foreground shadow-xl animate-in fade-in-0 zoom-in-95 p-3">
+                <div ref={dropdownRef} className="absolute top-[calc(100%+6px)] left-0 z-50 w-[290px] rounded-xl border bg-popover text-popover-foreground shadow-xl animate-in fade-in-0 zoom-in-95 p-3">
 
                     {/* Nav Header */}
                     <div className="flex items-center justify-between mb-3">
@@ -421,34 +457,14 @@ export function DatePicker({
                         </div>
                     )}
 
-                    {/* Footer */}
-                    <div className="mt-3 pt-2.5 border-t flex items-center justify-between">
+                    {/* Footer — Clear only */}
+                    <div className="mt-3 pt-2.5 border-t flex items-center justify-end">
                         <button
                             type="button"
                             onClick={clearValue}
                             className="text-xs font-semibold text-rose-500 hover:text-rose-600 hover:bg-rose-50 px-3 py-1.5 rounded-lg transition-colors"
                         >
                             Clear
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => {
-                                const today = new Date();
-                                const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-                                if (minDate && todayStr < minDate) return;
-                                if (maxDate && todayStr > maxDate) return;
-                                setNavYear(today.getFullYear());
-                                setNavMonth(today.getMonth());
-                                setView("days");
-                                onChange(todayStr);
-                                setDd(String(today.getDate()).padStart(2, "0"));
-                                setMm(String(today.getMonth() + 1).padStart(2, "0"));
-                                setYyyy(String(today.getFullYear()));
-                                setIsOpen(false);
-                            }}
-                            className="text-xs font-bold text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg uppercase tracking-wider transition-colors"
-                        >
-                            Today
                         </button>
                     </div>
                 </div>

@@ -52,7 +52,7 @@ export function AppointmentView({
 }: AppointmentViewProps) {
     const { addToast } = useToast();
     const { user } = useAuth();
-    const { appointments, doctors, patients, addAppointment, updateAppointment, checkInAppointment, fetchAppointments } = useData();
+    const { appointments, doctors, patients, addAppointment, updateAppointment, checkInAppointment, fetchAppointments, fetchAvailableSlots } = useData();
 
     // --- UI State ---
     const [searchQuery, setSearchQuery] = useState("");
@@ -77,9 +77,12 @@ export function AppointmentView({
     // --- Applied filters (only set when Apply is clicked) ---
     const [appliedFilters, setAppliedFilters] = useState({ doctor: "", patient: "", dateStart: "", dateEnd: "" });
 
-    // --- Edit State ---
+    // --- Edit / Reschedule State ---
     const [editDate, setEditDate] = useState("");
     const [editTime, setEditTime] = useState("");
+    const [rescheduleSlots, setRescheduleSlots] = useState<{ time: string; isFull: boolean }[]>([]);
+    const [slotsLoading, setSlotsLoading] = useState(false);
+    const [rescheduleError, setRescheduleError] = useState("");
 
 
 
@@ -182,15 +185,38 @@ export function AppointmentView({
         }
     };
 
-    const handleReschedule = () => {
+    const handleReschedule = async () => {
         if (!selectedAppointment || !editDate || !editTime) return;
-        updateAppointment(selectedAppointment.appointmentid, {
-            appointmentdatetime: `${editDate}T${editTime}:00`,
-            status: "Rescheduled" as any,
-        });
-        setSelectedAppointment(null);
-        addToast("Appointment rescheduled", "success");
+        setRescheduleError("");
+        try {
+            await updateAppointment(selectedAppointment.appointmentid, {
+                appointmentdatetime: `${editDate}T${editTime}:00`,
+                status: "Rescheduled" as any,
+            });
+            setSelectedAppointment(null);
+            addToast("Appointment rescheduled successfully", "success");
+        } catch (err: any) {
+            const msg = err?.message || "Failed to reschedule appointment.";
+            setRescheduleError(msg);
+            addToast(msg, "error");
+        }
     };
+
+    // Fetch slots whenever date changes in reschedule mode
+    useEffect(() => {
+        if (!editDate || !selectedAppointment || !isEditing) {
+            setRescheduleSlots([]);
+            setEditTime("");
+            return;
+        }
+        setSlotsLoading(true);
+        setEditTime("");
+        setRescheduleError("");
+        fetchAvailableSlots?.(selectedAppointment.doctorid, editDate)
+            .then(({ slots }) => setRescheduleSlots(slots))
+            .catch(() => setRescheduleSlots([]))
+            .finally(() => setSlotsLoading(false));
+    }, [editDate, isEditing]);
 
 
 
@@ -731,17 +757,77 @@ export function AppointmentView({
                                         <div className="space-y-4 animate-in fade-in duration-300">
                                             <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4 space-y-3">
                                                 <p className="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">Reschedule Appointment</p>
-                                                <div className="grid grid-cols-2 gap-3">
-                                                    <div className="space-y-1.5">
-                                                        <Label className="text-xs font-medium text-muted-foreground">New Date</Label>
-                                                        <DatePicker value={editDate} onChange={setEditDate} className="w-full h-9" minDate={new Date().toISOString().split('T')[0]} />
-                                                    </div>
-                                                    <div className="space-y-1.5">
-                                                        <Label className="text-xs font-medium text-muted-foreground">New Time</Label>
-                                                        <TimePicker value={editTime} onChange={setEditTime} containerClassName="w-full" />
-                                                    </div>
+                                                {/* Date picker */}
+                                                <div className="space-y-1.5">
+                                                    <Label className="text-xs font-medium text-muted-foreground">New Date</Label>
+                                                    <DatePicker
+                                                        value={editDate}
+                                                        onChange={(d) => { setEditDate(d); setEditTime(""); }}
+                                                        className="w-full h-9"
+                                                        minDate={new Date().toISOString().split('T')[0]}
+                                                    />
                                                 </div>
-                                                <Button size="sm" onClick={handleReschedule} className="w-full text-white gap-2 h-9">
+
+                                                {/* Slot grid */}
+                                                {editDate && (
+                                                    <div className="space-y-1.5">
+                                                        <Label className="text-xs font-medium text-muted-foreground">Select Time Slot</Label>
+                                                        {slotsLoading ? (
+                                                            <div className="flex items-center justify-center py-4 gap-2 text-muted-foreground text-sm">
+                                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                                Loading slots...
+                                                            </div>
+                                                        ) : rescheduleSlots.length === 0 ? (
+                                                            <div className="text-center py-4 text-sm text-rose-500 font-medium bg-rose-50 dark:bg-rose-950/20 rounded-lg border border-rose-200 dark:border-rose-800">
+                                                                Doctor not available on this day
+                                                            </div>
+                                                        ) : (
+                                                            <div className="grid grid-cols-3 gap-2">
+                                                                {rescheduleSlots.map(slot => {
+                                                                    const isToday = editDate === new Date().toISOString().split('T')[0];
+                                                                    const [slotH, slotM] = slot.time.split(':').map(Number);
+                                                                    const now = new Date();
+                                                                    const isPassed = isToday && (slotH < now.getHours() || (slotH === now.getHours() && slotM <= now.getMinutes()));
+                                                                    const isDisabled = slot.isFull || isPassed;
+                                                                    return (
+                                                                        <button
+                                                                            key={slot.time}
+                                                                            disabled={isDisabled}
+                                                                            onClick={() => setEditTime(slot.time)}
+                                                                            className={cn(
+                                                                                "text-xs font-semibold py-2 rounded-lg border transition-all duration-150",
+                                                                                isDisabled
+                                                                                    ? "bg-slate-100 dark:bg-slate-800 text-slate-400 border-slate-200 dark:border-slate-700 cursor-not-allowed"
+                                                                                    : editTime === slot.time
+                                                                                        ? "bg-amber-500 text-white border-amber-500 shadow-md"
+                                                                                        : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-amber-400 hover:text-amber-600"
+                                                                            )}
+                                                                        >
+                                                                            {`${slotH % 12 || 12}:${String(slotM).padStart(2, '0')} ${slotH >= 12 ? 'PM' : 'AM'}`}
+                                                                            {slot.isFull && <span className="block text-[9px] opacity-60">Full</span>}
+                                                                            {isPassed && !slot.isFull && <span className="block text-[9px] opacity-60">Passed</span>}
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+
+                                                {/* Error */}
+                                                {rescheduleError && (
+                                                    <p className="text-xs text-rose-500 font-medium flex items-center gap-1">
+                                                        <AlertCircle className="h-3.5 w-3.5" />
+                                                        {rescheduleError}
+                                                    </p>
+                                                )}
+
+                                                <Button
+                                                    size="sm"
+                                                    onClick={handleReschedule}
+                                                    disabled={!editDate || !editTime}
+                                                    className="w-full text-white gap-2 h-9 disabled:opacity-50"
+                                                >
                                                     <Clock className="h-3.5 w-3.5" /> Confirm Reschedule
                                                 </Button>
                                             </div>
@@ -782,7 +868,13 @@ export function AppointmentView({
                                         </Button>
                                     )}
                                     {isEditing && (
-                                        <Button variant="outline" className="flex-1" onClick={() => setIsEditing(false)}>
+                                        <Button variant="outline" className="flex-1" onClick={() => {
+                                            setIsEditing(false);
+                                            setEditDate("");
+                                            setEditTime("");
+                                            setRescheduleSlots([]);
+                                            setRescheduleError("");
+                                        }}>
                                             Back to Details
                                         </Button>
                                     )}

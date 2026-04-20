@@ -970,8 +970,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
                 setTimeout(() => fetchOPDVisits(), 500);
             }
             fetchAppointments();
-        } catch (err) {
+        } catch (err: any) {
             console.error(err);
+            throw err; // re-throw so callers can show errors
         }
     };
 
